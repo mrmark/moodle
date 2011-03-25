@@ -6051,6 +6051,61 @@ WHERE gradeitemid IS NOT NULL AND grademax IS NOT NULL");
         upgrade_main_savepoint(true, 2011022100.01);
     }
 
+    if ($oldversion < 2011031600.001) {
+
+        // Define field availablefrom to be added to course_sections
+        $table = new xmldb_table('course_sections');
+        $field = new xmldb_field('availablefrom', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'visible');
+
+        // Conditionally launch add field availablefrom
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Define field availableuntil to be added to course_sections
+        $table = new xmldb_table('course_sections');
+        $field = new xmldb_field('availableuntil', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'availablefrom');
+
+        // Conditionally launch add field availableuntil
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Define field showavailability to be added to course_sections
+        $table = new xmldb_table('course_sections');
+        $field = new xmldb_field('showavailability', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'availableuntil');
+
+        // Conditionally launch add field showavailability
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Define table course_sections_availability to be created
+        $table = new xmldb_table('course_sections_availability');
+
+        // Adding fields to table course_sections_availability
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('coursesectionid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('sourcecmid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('requiredcompletion', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('gradeitemid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('grademin', XMLDB_TYPE_NUMBER, '10, 5', null, null, null, null);
+        $table->add_field('grademax', XMLDB_TYPE_NUMBER, '10, 5', null, null, null, null);
+
+        // Adding keys to table course_sections_availability
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, array('id'));
+        $table->add_key('coursesectionid', XMLDB_KEY_FOREIGN, array('coursesectionid'), 'course_sections', array('id'));
+        $table->add_key('sourcecmid', XMLDB_KEY_FOREIGN, array('sourcecmid'), 'course_modules', array('id'));
+        $table->add_key('gradeitemid', XMLDB_KEY_FOREIGN, array('gradeitemid'), 'grade_items', array('id'));
+
+        // Conditionally launch create table for course_sections_availability
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        // Main savepoint reached
+        upgrade_main_savepoint(true, 2011031600.001);
+    }
 
     return true;
 }
