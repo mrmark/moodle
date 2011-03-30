@@ -1147,17 +1147,6 @@ class condition_completion extends condition_base {
     public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
         $completion = new completion_info($course);
 
-        try {
-            $modinfo->get_cm($this->get_cmid());
-        } catch (moodle_exception $e) {
-            global $PAGE, $UNITTEST;
-            if (!empty($UNITTEST) || (isset($PAGE) && strpos($PAGE->pagetype, 'course-view-')===0)) {
-                $class = get_class($object);
-                debugging("Warning: $class with id '{$object->id}' has condition on deleted activity {$this->get_cmid()} (to get rid of this message.  Edit to remove this message.)");
-            }
-            return array(true, '');
-        }
-
         // The completion system caches its own data
         $completiondata = $completion->get_data(
             (object) array('id' => $this->get_cmid()), $grabthelot, $userid, $modinfo

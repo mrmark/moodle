@@ -467,12 +467,16 @@ class section_info extends stdClass implements condition_availability {
     protected function load_conditions() {
         global $DB;
 
+        // Select only conditions that are still valid (EG: activity was deleted)
         $conditions = $DB->get_records_sql("SELECT csa.id AS csaid, gi.*, csa.sourcecmid, csa.requiredcompletion,
                                                    csa.gradeitemid, csa.grademin AS conditiongrademin,
                                                    csa.grademax AS conditiongrademax
                                               FROM {course_sections_availability} csa
-                                         LEFT JOIN {grade_items} gi ON gi.id=csa.gradeitemid
-                                             WHERE coursesectionid=?", array($this->id));
+                                         LEFT JOIN {course_modules} cm ON cm.id = csa.sourcecmid
+                                         LEFT JOIN {grade_items} gi ON gi.id = csa.gradeitemid
+                                             WHERE coursesectionid = ?
+                                               AND ((csa.sourcecmid IS NOT NULL AND cm.id IS NOT NULL)
+                                                OR (csa.gradeitemid IS NOT NULL AND gi.id IS NOT NULL))", array($this->id));
 
         foreach ($conditions as $condition) {
             if (!is_null($condition->sourcecmid)) {
