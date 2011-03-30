@@ -480,6 +480,55 @@ class restore_process_course_modules_availability extends restore_execution_step
     }
 }
 
+/**
+ * Process all the saved section availability records in backup_ids, matching
+ * course modules and grade item id once all them have been already restored.
+ * only if all matching are satisfied the availability condition will be created.
+ * At the same time, it is required for the site to have that functionality enabled.
+ */
+class restore_process_course_sections_availability extends restore_execution_step {
+
+    protected function define_execution() {
+        global $CFG, $DB;
+
+        // Site hasn't availability enabled
+        if (empty($CFG->enableavailability)) {
+            return;
+        }
+
+        // Get all the module_availability objects to process
+        $params = array('backupid' => $this->get_restoreid(), 'itemname' => 'section_availability');
+        $rs = $DB->get_recordset('backup_ids_temp', $params, '', 'itemid');
+        // Process availabilities, creating them if everything matches ok
+        foreach($rs as $availrec) {
+            $allmatchesok = true;
+            // Get the complete availabilityobject
+            $availability = restore_dbops::get_backup_ids_record($this->get_restoreid(), 'section_availability', $availrec->itemid)->info;
+            // Map the sourcecmid if needed and possible
+            if (!empty($availability->sourcecmid)) {
+                $newcm = restore_dbops::get_backup_ids_record($this->get_restoreid(), 'course_module', $availability->sourcecmid);
+                if ($newcm) {
+                    $availability->sourcecmid = $newcm->newitemid;
+                } else {
+                    $allmatchesok = false; // Failed matching, we won't create this availability rule
+                }
+            }
+            // Map the gradeitemid if needed and possible
+            if (!empty($availability->gradeitemid)) {
+                $newgi = restore_dbops::get_backup_ids_record($this->get_restoreid(), 'grade_item', $availability->gradeitemid);
+                if ($newgi) {
+                    $availability->gradeitemid = $newgi->newitemid;
+                } else {
+                    $allmatchesok = false; // Failed matching, we won't create this availability rule
+                }
+            }
+            if ($allmatchesok) { // Everything ok, create the availability rule
+                $DB->insert_record('course_sections_availability', $availability);
+            }
+        }
+        $rs->close();
+    }
+}
 
 /*
  * Execution step that, *conditionally* (if there isn't preloaded information)
@@ -919,16 +968,24 @@ class restore_process_categories_and_questions extends restore_execution_step {
 class restore_section_structure_step extends restore_structure_step {
 
     protected function define_structure() {
+        global $CFG;
+
         $section = new restore_path_element('section', '/section');
+        $paths   = array();
+        $paths[] = $section;
+
+        if ($CFG->enableavailability) {
+            $paths[] = new restore_path_element('availability', '/section/availability_info/availability');
+        }
 
         // Apply for 'format' plugins optional paths at section level
         $this->add_plugin_structure('format', $section);
 
-        return array($section);
+        return $paths;
     }
 
     public function process_section($data) {
-        global $DB;
+        global $CFG, $DB;
         $data = (object)$data;
         $oldid = $data->id; // We'll need this later
 
@@ -945,6 +1002,16 @@ class restore_section_structure_step extends restore_structure_step {
             $section->summaryformat = $data->summaryformat;
             $section->sequence = '';
             $section->visible = $data->visible;
+
+            if ($CFG->enableavailability) {
+                // Availability fields might not exist in backup
+                $fields = array('availablefrom', 'availableuntil', 'showavailability');
+                foreach ($fields as $field) {
+                    if (property_exists($data, $field)) {
+                        $section->$field = $data->$field;
+                    }
+                }
+            }
             $newitemid = $DB->insert_record('course_sections', $section);
             $restorefiles = true;
 
@@ -980,6 +1047,15 @@ class restore_section_structure_step extends restore_structure_step {
         //        $DB->set_field('course', 'numsections', $section->section, array('id' => $this->get_courseid()));
         //    }
         //}
+    }
+
+    public function process_availability($data) {
+        $data = (object)$data;
+        // Simply going to store the whole availability record now, we'll process
+        // all them later in the final task (once all activities have been restored)
+        // Let's call the low level one to be able to store the whole object
+        $data->coursesectionid = $this->task->get_sectionid(); // Let add the availability section ID
+        restore_dbops::set_backup_ids_record($this->get_restoreid(), 'section_availability', $data->id, 0, null, $data);
     }
 
     protected function after_execute() {
