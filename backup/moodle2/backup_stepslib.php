@@ -356,16 +356,24 @@ class backup_section_structure_step extends backup_structure_step {
     protected function define_structure() {
 
         // Define each element separated
-
         $section = new backup_nested_element('section', array('id'), array(
-            'number', 'name', 'summary', 'summaryformat', 'sequence', 'visible'));
+            'number', 'name', 'summary', 'summaryformat', 'sequence', 'visible',
+            'availablefrom', 'availableuntil', 'showavailability'));
+
+        $availinfo    = new backup_nested_element('availability_info');
+        $availability = new backup_nested_element('availability', array('id'), array(
+            'sourcecmid', 'requiredcompletion', 'gradeitemid', 'grademin', 'grademax'));
+
+        // Define the tree
+        $section->add_child($availinfo);
+        $availinfo->add_child($availability);
 
         // attach format plugin structure to $section element, only one allowed
         $this->add_plugin_structure('format', $section, false);
 
         // Define sources
-
         $section->set_source_table('course_sections', array('id' => backup::VAR_SECTIONID));
+        $availability->set_source_table('course_sections_availability', array('coursesectionid' => backup::VAR_SECTIONID));
 
         // Aliases
         $section->set_source_alias('section', 'number');
@@ -805,7 +813,7 @@ class backup_gradebook_structure_step extends backup_structure_step {
         //grade_categories
         $grade_categories = new backup_nested_element('grade_categories');
         $grade_category   = new backup_nested_element('grade_category', array('id'), array(
-                //'courseid', 
+                //'courseid',
                 'parent', 'depth', 'path', 'fullname', 'aggregation', 'keephigh',
                 'dropload', 'aggregateonlygraded', 'aggregateoutcomes', 'aggregatesubcats',
                 'timecreated', 'timemodified', 'hidden'));
