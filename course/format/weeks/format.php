@@ -153,9 +153,12 @@ defined('MOODLE_INTERNAL') || die();
 
         $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $thissection->visible or !$course->hiddensections);
 
-        // This can be false!  Check PHPDoc for more info.
-        $sectioninfo = $modinfo->get_section($thissection->section);
-
+        if (!empty($CFG->enableavailability)) {
+            // This can still be false!  Check PHPDoc for more info.
+            $sectioninfo = $modinfo->get_section($thissection->section);
+        } else {
+            $sectioninfo = false;
+        }
         // Apply availability logic now - if not available then hide this section
         // if we don't have availability information or if we shouldn't show it
         if ($showsection and $sectioninfo and !$sectioninfo->available) {
@@ -231,10 +234,18 @@ defined('MOODLE_INTERNAL') || die();
             } else if (!has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !$sectioninfo->available) {
                 echo $OUTPUT->heading($currenttext.$weekperiod.' ('.$sectioninfo->availableinfo.')', 3, 'weekdates');
             } else {
-                if (isset($thissection->name) && ($thissection->name !== NULL)) {  // empty string is ok
-                    echo $OUTPUT->heading($thissection->name, 3, 'weekdates');
+                if (has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !empty($sectioninfo->availablefullinfo)) {
+                    $availibility = '<div class="availabilityinfo">'.get_string($sectioninfo->showavailability
+                        ? 'userrestriction_visible'
+                        : 'userrestriction_hidden','condition',
+                        $sectioninfo->availablefullinfo).'</div>';
                 } else {
-                    echo $OUTPUT->heading($currenttext.$weekperiod, 3, 'weekdates');
+                    $availibility = '';
+                }
+                if (isset($thissection->name) && ($thissection->name !== NULL)) {  // empty string is ok
+                    echo $OUTPUT->heading($thissection->name.$availibility, 3, 'weekdates');
+                } else {
+                    echo $OUTPUT->heading($currenttext.$weekperiod.$availibility, 3, 'weekdates');
                 }
                 echo '<div class="summary">';
                 $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
