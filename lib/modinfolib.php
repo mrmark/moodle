@@ -526,7 +526,6 @@ class section_info extends stdClass implements condition_availability {
      *
      * @param course_modinfo $modinfo
      * @return void
-     * @todo Not currently used
      */
     public function update_user_visible(course_modinfo $modinfo) {
         $this->uservisible = true;

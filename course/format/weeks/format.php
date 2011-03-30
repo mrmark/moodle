@@ -161,7 +161,7 @@ defined('MOODLE_INTERNAL') || die();
         }
         // Apply availability logic now - if not available then hide this section
         // if we don't have availability information or if we shouldn't show it
-        if ($showsection and $sectioninfo and !$sectioninfo->available) {
+        if ($showsection and $sectioninfo and !$sectioninfo->uservisible) {
             if (empty($sectioninfo->availableinfo) or empty($sectioninfo->showavailability)) {
                 $showsection = false;
             }
@@ -231,7 +231,7 @@ defined('MOODLE_INTERNAL') || die();
             echo '<div class="content">';
             if (!has_capability('moodle/course:viewhiddensections', $context) and !$thissection->visible) {   // Hidden for students
                 echo $OUTPUT->heading($currenttext.$weekperiod.' ('.get_string('notavailable').')', 3, 'weekdates');
-            } else if (!has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !$sectioninfo->available) {
+            } else if ($sectioninfo and !$sectioninfo->uservisible) {
                 echo $OUTPUT->heading($currenttext.$weekperiod.' ('.$sectioninfo->availableinfo.')', 3, 'weekdates');
             } else {
                 if (has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !empty($sectioninfo->availablefullinfo)) {
