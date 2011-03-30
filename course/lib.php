@@ -1380,6 +1380,71 @@ function get_print_section_cm_text(cm_info $cm, $course) {
 }
 
 /**
+ * Determine if a section should be shown
+ *
+ * @param object $section The section
+ * @param object $course The course object
+ * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @return bool
+ */
+function get_section_show($section, $course, course_modinfo $modinfo = NULL) {
+    global $CFG;
+
+    $context     = get_context_instance(CONTEXT_COURSE, $course->id);
+    $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $section->visible or !$course->hiddensections);
+
+    if ($showsection and !empty($CFG->enableavailability)) {
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        // This can still be false!  Check PHPDoc for more info.
+        $sectioninfo = $modinfo->get_section($section->section);
+
+        // Apply availability logic now - if not available then hide this section
+        // if we don't have availability information or if we shouldn't show it
+        if ($sectioninfo and !$sectioninfo->available) {
+            if (empty($sectioninfo->availableinfo) or empty($sectioninfo->showavailability)) {
+                $showsection = false;
+            }
+        }
+    }
+    return $showsection;
+}
+
+/**
+ * Get full availability information string for a section
+ *
+ * @param object $section The section
+ * @param object $course The course object
+ * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @return string
+ */
+function get_section_full_availability_info($section, $course, course_modinfo $modinfo = NULL) {
+    global $CFG;
+
+    $availibility = '';
+
+    if (!empty($CFG->enableavailability)) {
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        // This can still be false!  Check PHPDoc for more info.
+        $sectioninfo = $modinfo->get_section($section->section);
+        $context     = get_context_instance(CONTEXT_COURSE, $course->id);
+
+        if (has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !empty($sectioninfo->availablefullinfo)) {
+            $information = get_string(
+                $sectioninfo->showavailability ? 'userrestriction_visible' : 'userrestriction_hidden',
+                'condition',
+                $sectioninfo->availablefullinfo
+            );
+            $availibility = html_writer::tag('div', $information, array('class' => 'availabilityinfo'));
+        }
+    }
+    return $availibility;
+}
+
+/**
  * Prints a section full of activity modules
  */
 function print_section($course, $section, $mods, $modnamesused, $absolute=false, $width="100%", $hidecompletion=false) {
