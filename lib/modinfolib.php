@@ -420,6 +420,13 @@ class section_info extends stdClass implements condition_availability {
     public $availableinfo = '';
 
     /**
+     * Full availability information string.
+     *
+     * @var string
+     */
+    public $availablefullinfo = '';
+
+    /**
      * An array of conditions that restrict this section's availability.
      *
      * @var array|condition_base[]
@@ -505,6 +512,7 @@ class section_info extends stdClass implements condition_availability {
             $this->available = $ci->is_available(
                 $this->availableinfo, true, $modinfo->get_user_id(), $modinfo
             );
+            $this->availablefullinfo = $ci->get_full_information($modinfo);
         }
         $this->update_user_visible($modinfo);
     }
