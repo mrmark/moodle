@@ -148,7 +148,7 @@ while ($section <= $course->numsections) {
         $thissection->id = $DB->insert_record('course_sections', $thissection);
     }
 
-    $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $thissection->visible or !$course->hiddensections);
+    $showsection = get_section_show($thissection, $course, $modinfo);
 
     if (!empty($displaysection) and $displaysection != $section) {  // Check this topic is visible
         if ($showsection) {
@@ -214,13 +214,23 @@ while ($section <= $course->numsections) {
         }
         echo '</div>';
 
+        if (!empty($CFG->enableavailability)) {
+            // This can still be false!  Check PHPDoc for more info.
+            $sectioninfo = $modinfo->get_section($thissection->section);
+        } else {
+            $sectioninfo = false;
+        }
+
         echo '<div class="content">';
         if (!has_capability('moodle/course:viewhiddensections', $context) and !$thissection->visible) {   // Hidden for students
             echo get_string('notavailable');
+        } else if ($sectioninfo and !$sectioninfo->uservisible) {
+            echo html_writer::tag('div', $sectioninfo->availableinfo, array('class' => 'availabilityinfo'));
         } else {
             if (!is_null($thissection->name)) {
                 echo $OUTPUT->heading($thissection->name, 3, 'sectionname');
             }
+            echo get_section_full_availability_info($thissection, $course, $modinfo);
             echo '<div class="summary">';
             if ($thissection->summary) {
                 $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
