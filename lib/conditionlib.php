@@ -689,3 +689,1372 @@ WHERE
         return array_key_exists($cm->id, $CONDITIONLIB_PRIVATE->usedincondition[$course->id]);
     }
 }
+
+/**
+ * Base availability condition class
+ *
+ * These classes contain logic for various criteria
+ * that determine availability.
+ *
+ * Warning: these are called during the building
+ * of course_modinfo instance.
+ *
+ * Warning, this class does get serialized and stored
+ * into the database, so must be able to survive that.
+ */
+abstract class condition_base extends stdClass {
+    /**
+     * Generate an information string that informs the
+     * user how to meet this condition.
+     *
+     * @abstract
+     * @param condition_availability $object The object that the condition is being applied
+     * @param object $course Course record object
+     * @param course_modinfo $modinfo
+     * @return string
+     */
+    abstract public function get_information(condition_availability $object, $course, course_modinfo $modinfo);
+
+    /**
+     * Determine if the condition has been met by the user or not.
+     *
+     * @abstract
+     * @param condition_availability $object
+     * @param object $course The course record object
+     * @param course_modinfo $modinfo
+     * @param int $userid The user that this is being generated for
+     * @param bool $grabthelot Performance flag - grab things in bulk if true
+     * @return array 0 index is boolean for available, 1 index is information string - used as reason why not available
+     */
+    abstract public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false);
+}
+
+/**
+ * This condition is based on a date range.  It is only
+ * satisfied if the current time is within the limits.
+ */
+class condition_daterange extends condition_base {
+    /**
+     * Available after this date.  If zero, ignored.
+     *
+     * @var int
+     */
+    protected $availablefrom = 0;
+
+    /**
+     * Available before this date.  If zero, ignored.
+     *
+     * @var int
+     */
+    protected $availableuntil = 0;
+
+    /**
+     * @param int $availablefrom Available after this date.  If zero, ignored.
+     * @param int $availableuntil Available before this date.  If zero, ignored.
+     */
+    public function __construct($availablefrom, $availableuntil) {
+        $this->availablefrom  = $availablefrom;
+        $this->availableuntil = $availableuntil;
+    }
+
+    /**
+     * @return int
+     */
+    public function get_availablefrom() {
+        return $this->availablefrom;
+    }
+
+    /**
+     * @return int
+     */
+    public function get_availableuntil() {
+        return $this->availableuntil;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Generate a string to inform the user of the date limits.
+     */
+    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+        $from  = $this->get_availablefrom();
+        $until = $this->get_availableuntil();
+
+        if ($from and $until) {
+            return get_string('requires_date_both', 'condition', (object) array(
+                'from'  => $this->get_display_from(),
+                'until' => $this->get_display_until()
+            ));
+        } else if ($from) {
+            return get_string('requires_date', 'condition', $this->get_display_from());
+        } else if ($until) {
+            return get_string('requires_date_before', 'condition', $this->get_display_until());
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * See if the current time is within our limits.
+     */
+    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
+        $from  = $this->get_availablefrom();
+        $until = $this->get_availableuntil();
+
+        if ($from and time() < $from) {
+            return array(false, get_string('requires_date', 'condition', $this->get_display_from()));
+        }
+        if ($until and time() >= $until) {
+            // But we don't display any information about this case. This is
+            // because the only reason to set a 'disappear' date is usually
+            // to get rid of outdated information/clutter in which case there
+            // is no point in showing it...
+
+            // Note it would be nice if we could make it so that the 'until'
+            // date appears below the item while the item is still accessible,
+            // unfortunately this is not possible in the current system. Maybe
+            // later, or if somebody else wants to add it.
+            return array(false, '');
+        }
+        return array(true, '');
+    }
+
+    /**
+     * Human readable display of available from date.
+     *
+     * @return string
+     */
+    protected function get_display_from() {
+        $userdate = usergetdate($this->availablefrom);
+        $dateonly = $userdate['hours']==0 and $userdate['minutes']==0 and $userdate['seconds']==0;
+
+        return userdate(
+            $this->availablefrom, get_string($dateonly ? 'strftimedate' : 'strftimedatetime', 'langconfig')
+        );
+    }
+
+    /**
+     * Human readable display of available until date.
+     *
+     * @return string
+     */
+    protected function get_display_until() {
+        $userdate = usergetdate($this->availableuntil);
+        $dateonly = $userdate['hours']==23 and $userdate['minutes']==59 and $userdate['seconds']==59;
+
+        return userdate(
+            $this->availableuntil, get_string($dateonly ? 'strftimedate' : 'strftimedatetime', 'langconfig')
+        );
+    }
+}
+
+/**
+ * This condition is based on a grade item and it's score
+ */
+class condition_grade extends condition_base {
+    /**
+     * The grade item ID
+     *
+     * @var int
+     */
+    protected $gradeitemid;
+
+    /**
+     * The minimum percent score needed in grade item
+     * Null means this limit is ignored.
+     *
+     * @var int|null
+     */
+    protected $min;
+
+    /**
+     * The maximum percent score needed in grade item.
+     * Null means this limit is ignored.
+     *
+     * @var int|null
+     */
+    protected $max;
+
+    /**
+     * The grade item's name
+     *
+     * @var string
+     */
+    protected $name;
+
+    /**
+     * @param int|object $gradeitem The grade item ID or object
+     * @param int|null $min
+     * @param int|null $max
+     */
+    public function __construct($gradeitem, $min, $max) {
+        global $DB, $CFG;
+
+        require_once($CFG->libdir.'/gradelib.php');
+
+        if (is_object($gradeitem)) {
+            $this->gradeitemid = $gradeitem->id;
+        } else {
+            $this->gradeitemid = $gradeitem;
+            $gradeitem = $DB->get_record('grade_items', array('id' => $this->gradeitemid), '*', MUST_EXIST);
+        }
+        if ($min === '') {
+            $min = NULL;
+        }
+        if ($max === '') {
+            $max = NULL;
+        }
+        $this->min = $min;
+        $this->max = $max;
+
+        $item = new grade_item($gradeitem, false);
+        $this->name = $item->get_name();
+    }
+
+    /**
+     * @return int
+     */
+    public function get_gradeitemid() {
+        return $this->gradeitemid;
+    }
+
+    /**
+     * @return int|null
+     */
+    public function get_max() {
+        return $this->max;
+    }
+
+    /**
+     * @return int|null
+     */
+    public function get_min() {
+        return $this->min;
+    }
+
+    /**
+     * @return string
+     */
+    public function get_name() {
+        return $this->name;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Tell the user in a neutral way what they need to score.
+     */
+    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+        $min = $this->get_min();
+        $max = $this->get_max();
+
+        if (is_null($min) && is_null($max)) {
+            $string = 'any';
+        } else if (is_null($max)) {
+            $string = 'min';
+        } else if (is_null($min)) {
+            $string = 'max';
+        } else {
+            $string = 'range';
+        }
+        return get_string('requires_grade_'.$string, 'condition', $this->get_name());
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * See if the user has scored within our limits.
+     */
+    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
+        $min   = $this->get_min();
+        $max   = $this->get_max();
+        $score = $this->get_cached_grade_score($course, $this->get_gradeitemid(), $grabthelot, $userid);
+        if ($score === false or (!is_null($min) and $score < $min) or (!is_null($max) and $score >= $max)) {
+            return array(false, $this->get_information($object, $course, $modinfo));
+        }
+        return array(true, '');
+    }
+
+    /**
+     * Obtains a grade score. Note that this score should not be displayed to
+     * the user, because gradebook rules might prohibit that. It may be a
+     * non-final score subject to adjustment later.
+     *
+     * @global object
+     * @global object
+     * @global object
+     * @param object $course Course record object
+     * @param int $gradeitemid Grade item ID we're interested in
+     * @param bool $grabthelot If true, grabs all scores for current user on
+     *   this course, so that later ones come from cache
+     * @param int $userid Set if requesting grade for a different user (does
+     *   not use cache)
+     * @return float Grade score as a percentage in range 0-100 (e.g. 100.0
+     *   or 37.21), or false if user does not have a grade yet
+     */
+    private function get_cached_grade_score($course, $gradeitemid, $grabthelot=false, $userid=0) {
+        global $USER, $DB, $SESSION;
+        if ($userid==0 || $userid==$USER->id) {
+            // For current user, go via cache in session
+            if (empty($SESSION->gradescorecache) || $SESSION->gradescorecacheuserid!=$USER->id) {
+                $SESSION->gradescorecache = array();
+                $SESSION->gradescorecacheuserid = $USER->id;
+            }
+            if (!array_key_exists($gradeitemid, $SESSION->gradescorecache)) {
+                if ($grabthelot) {
+                    // Get all grades for the current course
+                    $rs = $DB->get_recordset_sql("
+SELECT
+    gi.id,gg.finalgrade,gg.rawgrademin,gg.rawgrademax
+FROM
+    {grade_items} gi
+    LEFT JOIN {grade_grades} gg ON gi.id=gg.itemid AND gg.userid=?
+WHERE
+    gi.courseid=?", array($USER->id, $course->id));
+                    foreach ($rs as $record) {
+                        $SESSION->gradescorecache[$record->id] =
+                            is_null($record->finalgrade)
+                                // No grade = false
+                                ? false
+                                // Otherwise convert grade to percentage
+                                : (($record->finalgrade - $record->rawgrademin) * 100) /
+                                    ($record->rawgrademax - $record->rawgrademin);
+
+                    }
+                    $rs->close();
+                    // And if it's still not set, well it doesn't exist (eg
+                    // maybe the user set it as a condition, then deleted the
+                    // grade item) so we call it false
+                    if (!array_key_exists($gradeitemid, $SESSION->gradescorecache)) {
+                        $SESSION->gradescorecache[$gradeitemid] = false;
+                    }
+                } else {
+                    // Just get current grade
+                    $record = $DB->get_record('grade_grades', array(
+                        'userid'=>$USER->id, 'itemid'=>$gradeitemid));
+                    if ($record && !is_null($record->finalgrade)) {
+                        $score = (($record->finalgrade - $record->rawgrademin) * 100) /
+                            ($record->rawgrademax - $record->rawgrademin);
+                    } else {
+                        // Treat the case where row exists but is null, same as
+                        // case where row doesn't exist
+                        $score = false;
+                    }
+                    $SESSION->gradescorecache[$gradeitemid]=$score;
+                }
+            }
+            return $SESSION->gradescorecache[$gradeitemid];
+        } else {
+            // Not the current user, so request the score individually
+            $record = $DB->get_record('grade_grades', array(
+                'userid'=>$userid, 'itemid'=>$gradeitemid));
+            if ($record && !is_null($record->finalgrade)) {
+                $score = (($record->finalgrade - $record->rawgrademin) * 100) /
+                    ($record->rawgrademax - $record->rawgrademin);
+            } else {
+                // Treat the case where row exists but is null, same as
+                // case where row doesn't exist
+                $score = false;
+            }
+            return $score;
+        }
+    }
+
+    /**
+     * For testing only. Wipes information cached in user session.
+     *
+     * @global object
+     */
+    static function wipe_session_cache() {
+        global $SESSION;
+
+        unset($SESSION->gradescorecache);
+        unset($SESSION->gradescorecacheuserid);
+    }
+}
+
+/**
+ * This condition is based on the completion of a course activity
+ */
+class condition_completion extends condition_base {
+    /**
+     * The course module ID
+     *
+     * @var int
+     */
+    protected $cmid;
+
+    /**
+     * The required completion status
+     *
+     * This is set to a completion constant. EG:
+     * COMPLETION_INCOMPLETE
+     * COMPLETION_COMPLETE
+     * COMPLETION_COMPLETE_PASS
+     * COMPLETION_COMPLETE_FAIL
+     *
+     * @var int
+     */
+    protected $requiredcompletion;
+
+    /**
+     * @param int $cmid The course module ID
+     * @param int $requiredcompletion The required completion status
+     */
+    public function __construct($cmid, $requiredcompletion) {
+        $this->cmid = $cmid;
+        $this->requiredcompletion = $requiredcompletion;
+    }
+
+    /**
+     * @return int
+     */
+    public function get_cmid() {
+        return $this->cmid;
+    }
+
+    /**
+     * @return int
+     */
+    public function get_requiredcompletion() {
+        return $this->requiredcompletion;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Let the user know what condition must be met on which activity
+     */
+    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+        try {
+            $cm = $modinfo->get_cm($this->get_cmid());
+
+            return get_string(
+                'requires_completion_'.$this->get_requiredcompletion(),
+                'condition',
+                $cm->name
+            );
+        } catch (moodle_exception $e) {
+            return '';
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * See if the user has met the completion condition
+     */
+    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
+        $completion = new completion_info($course);
+
+        try {
+            $modinfo->get_cm($this->get_cmid());
+        } catch (moodle_exception $e) {
+            global $PAGE, $UNITTEST;
+            if (!empty($UNITTEST) || (isset($PAGE) && strpos($PAGE->pagetype, 'course-view-')===0)) {
+                $class = get_class($object);
+                debugging("Warning: $class with id '{$object->id}' has condition on deleted activity {$this->get_cmid()} (to get rid of this message.  Edit to remove this message.)");
+            }
+            return array(true, '');
+        }
+
+        // The completion system caches its own data
+        $completiondata = $completion->get_data(
+            (object) array('id' => $this->get_cmid()), $grabthelot, $userid, $modinfo
+        );
+
+        $met = true;
+        if ($this->get_requiredcompletion() == COMPLETION_COMPLETE) {
+            // 'Complete' also allows the pass, fail states
+            switch ($completiondata->completionstate) {
+                case COMPLETION_COMPLETE:
+                case COMPLETION_COMPLETE_FAIL:
+                case COMPLETION_COMPLETE_PASS:
+                    break;
+                default:
+                    $met = false;
+            }
+        } else {
+            // Other values require exact match
+            if ($this->get_requiredcompletion() != $completiondata->completionstate) {
+                $met = false;
+            }
+        }
+        $information = '';
+        if (!$met) {
+            $information = $this->get_information($object, $course, $modinfo);
+        }
+        return array($met, $information);
+    }
+}
+
+/**
+ * If an object implements this interface, then it can be restricted
+ * by availability conditions.  Used by {@see condition_info_controller}
+ */
+interface condition_availability {
+    /**
+     * Given a condition, save it to the database
+     *
+     * @abstract
+     * @param condition_base $condition The condition instance,
+     *        populated and ready to be saved.
+     * @return void
+     */
+    public function add_condition(condition_base $condition);
+
+    /**
+     * Delete all conditions
+     *
+     * @abstract
+     * @return void
+     */
+    public function delete_conditions();
+
+    /**
+     * Get the course ID that this object is related to
+     *
+     * @abstract
+     * @return int
+     */
+    public function get_courseid();
+
+    /**
+     * Get conditions associated with the object.
+     *
+     * @abstract
+     * @return array|condition_base[]
+     */
+    public function get_conditions();
+}
+
+/**
+ * Given an instance of condition_availability, determine availability
+ * information.  Basically, this completes the functionality of
+ * condition_availability instances.
+ */
+class condition_info_controller {
+    /**
+     * @var condition_availability
+     */
+    protected $object;
+
+    /**
+     * When processing conditions, do them in this order.
+     *
+     * This is lame-o, but need to bring order in somehow...
+     *
+     * @var array
+     */
+    protected $conditionorder = array(
+        'condition_completion',
+        'condition_grade',
+        'condition_daterange',
+    );
+
+    /**
+     * @param condition_availability $object
+     */
+    public function __construct(condition_availability $object) {
+        $this->object = $object;
+    }
+
+    /**
+     * @return condition_availability
+     */
+    public function get_object() {
+        return $this->object;
+    }
+
+    /**
+     * Get conditions, filterable.
+     *
+     * This is the same as condition_availability::get_conditions
+     * but allows for filtering down to a specific set of conditions.
+     *
+     * @param null $conditionclass Can set this to a condition class name to filter
+     *                             conditions to a specific type.
+     * @return array|condition_base[]
+     */
+    public function get_conditions($conditionclass = NULL) {
+        $conditions = $this->object->get_conditions();
+
+        if (!is_null($conditionclass)) {
+            $return = array();
+            foreach ($conditions as $condition) {
+                if ($condition instanceof $conditionclass) {
+                    $return[] = $condition;
+                }
+            }
+            return $return;
+        }
+        return $conditions;
+    }
+
+    /**
+     * @return object
+     */
+    public function get_course() {
+        global $COURSE, $DB;
+
+        if ($this->object->get_courseid() == $COURSE->id) {
+            return $COURSE;
+        } else {
+            return $DB->get_record(
+                'course',
+                array('id' => $this->object->get_courseid()),
+                'id, enablecompletion, modinfo',
+                MUST_EXIST
+            );
+        }
+    }
+
+    /**
+     * Obtains a string describing all availability restrictions (even if
+     * they do not apply any more).
+     *
+     * @global object
+     * @global object
+     * @param object $modinfo Usually leave as null for default. Specify when
+     *   calling recursively from inside get_fast_modinfo. The value supplied
+     *   here must include list of all CMs with 'id' and 'name'
+     * @return string Information string (for admin) about all restrictions on
+     *   this item
+     */
+    public function get_full_information($modinfo = null) {
+        $course      = $this->get_course();
+        $information = array();
+
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        foreach ($this->conditionorder as $classname) {
+            foreach ($this->get_conditions($classname) as $condition) {
+                if ($info = $condition->get_information($this->object, $course, $modinfo)) {
+                    $information[] = $info;
+                }
+            }
+        }
+        return implode(' ', $information);
+    }
+
+    /**
+     * Determines whether this particular section is currently available
+     * according to these criteria.
+     *
+     * - This does not include the 'visible' setting (i.e. this might return
+     *   true even if visible is false); visible is handled independently.
+     * - This does not take account of the viewhiddenactivities capability.
+     *   That should apply later.
+     *
+     * @global object
+     * @global object
+     * @uses COMPLETION_COMPLETE
+     * @uses COMPLETION_COMPLETE_FAIL
+     * @uses COMPLETION_COMPLETE_PASS
+     * @param string $information If the item has availability restrictions,
+     *   a string that describes the conditions will be stored in this variable;
+     *   if this variable is set blank, that means don't display anything
+     * @param bool $grabthelot Performance hint: if true, caches information
+     *   required for all course-modules, to make the front page and similar
+     *   pages work more quickly (works only for current user)
+     * @param int $userid If set, specifies a different user ID to check availability for
+     * @param object $modinfo Usually leave as null for default. Specify when
+     *   calling recursively from inside get_fast_modinfo. The value supplied
+     *   here must include list of all CMs with 'id' and 'name'
+     * @return bool True if this item is available to the user, false otherwise
+     */
+    public function is_available(&$information, $grabthelot=false, $userid=0, $modinfo=null) {
+        $available = true;
+        $infos     = array();
+        $course    = $this->get_course();
+
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        foreach ($this->conditionorder as $classname) {
+            foreach ($this->get_conditions($classname) as $condition) {
+                list($met, $info) = $condition->has_been_met(
+                    $this->object, $course, $modinfo, $userid, $grabthelot
+                );
+                if (!$met) {
+                    $available = false;
+                    if (!empty($info)) {
+                        $infos[] = $info;
+                    }
+                }
+            }
+        }
+        $information = implode(' ', $infos);
+        return $available;
+    }
+
+    /**
+     * Save conditions form form input
+     *
+     * @param object $data Form data
+     * @param bool $deletefirst Delete existing conditions first
+     * @return void
+     */
+    public function update_from_form($data, $deletefirst = true) {
+        if ($deletefirst) {
+            $this->object->delete_conditions();
+        }
+        if (!empty($data->conditiongradegroup)) {
+            foreach ($data->conditiongradegroup as $record) {
+                if ($record['conditiongradeitemid']) {
+
+                    $condition = new condition_grade(
+                        $record['conditiongradeitemid'],
+                        $record['conditiongrademin'],
+                        $record['conditiongrademax']
+                    );
+                    $this->object->add_condition($condition);
+                }
+            }
+        }
+        if (!empty($data->conditioncompletiongroup)) {
+            foreach($data->conditioncompletiongroup as $record) {
+                if ($record['conditionsourcecmid']) {
+
+                    $condition = new condition_completion(
+                        $record['conditionsourcecmid'],
+                        $record['conditionrequiredcompletion']
+                    );
+                    $this->object->add_condition($condition);
+                }
+            }
+        }
+    }
+
+    /**
+     * Used in course/lib.php because we need to disable the completion JS if
+     * a completion value affects a conditional activity.
+     *
+     * @global object
+     * @param object $course Moodle course object
+     * @param object $cm Moodle course-module
+     * @return bool True if this is used in a condition, false otherwise
+     * @todo IDK what to do with this yet
+     */
+    public static function completion_value_used_as_condition($course, $cm) {
+        // Have we already worked out a list of required completion values
+        // for this course? If so just use that
+        global $CONDITIONLIB_PRIVATE;
+        if (!array_key_exists($course->id, $CONDITIONLIB_PRIVATE->usedincondition)) {
+            // We don't have data for this course, build it
+            $modinfo = get_fast_modinfo($course);
+            $CONDITIONLIB_PRIVATE->usedincondition[$course->id] = array();
+            foreach ($modinfo->cms as $othercm) {
+                foreach ($othercm->conditionscompletion as $cmid=>$expectedcompletion) {
+                    $CONDITIONLIB_PRIVATE->usedincondition[$course->id][$cmid] = true;
+                }
+            }
+        }
+        return array_key_exists($cm->id, $CONDITIONLIB_PRIVATE->usedincondition[$course->id]);
+    }
+}
+
+/**
+ * @todo Extend from a base completion_info class
+ */
+class section_condition_info {
+    /**
+     * @var object
+     */
+    private $section;
+
+    /**
+     * @var bool
+     */
+    private $gotdata;
+
+    /**
+     * Constructs with section details.
+     *
+     * @global object
+     * @uses CONDITION_MISSING_NOTHING
+     * @uses CONDITION_MISSING_EVERYTHING
+     * @uses DEBUG_DEVELOPER
+     * @uses CONDITION_MISSING_EXTRATABLE
+     * @param object $section
+     * @param int $expectingmissing Used to control whether or not a developer
+     *   debugging message (performance warning) will be displayed if some of
+     *   the above data is missing and needs to be retrieved; a
+     *   CONDITION_MISSING_xx constant
+     * @param bool $loaddata If you need a 'write-only' object, set this value
+     *   to false to prevent database access from constructor
+     * @return condition_info Object which can retrieve information about the
+     *   activity
+     */
+    public function __construct($section, $expectingmissing=CONDITION_MISSING_NOTHING,
+        $loaddata=true) {
+        global $DB;
+
+        // Check ID as otherwise we can't do the other queries
+        if (empty($section->id)) {
+            throw new coding_exception("Invalid parameters; section ID not included");
+        }
+
+        // If not loading data, don't do anything else
+        if (!$loaddata) {
+            $this->section = (object)array('id'=>$section->id);
+            $this->gotdata = false;
+            return;
+        }
+
+        // Missing basic data from course_modules
+        if (!isset($section->availablefrom) || !isset($section->availableuntil) ||
+            !isset($section->showavailability) || !isset($section->course)) {
+            if ($expectingmissing<CONDITION_MISSING_EVERYTHING) {
+                debugging('Performance warning: section_condition_info constructor is
+                    faster if you pass in $section with at least basic fields
+                    (availablefrom,availableuntil,showavailability,course).
+                    [This warning can be disabled, see phpdoc.]',
+                    DEBUG_DEVELOPER);
+            }
+            $section = $DB->get_record('course_sections',array('id'=>$section->id),
+                'id,course,availablefrom,availableuntil,showavailability', MUST_EXIST);
+        }
+
+        $this->section = clone($section);
+        $this->gotdata = true;
+
+        // Missing extra data
+        if (!isset($section->conditionsgrade) || !isset($section->conditionscompletion)) {
+            if ($expectingmissing<CONDITION_MISSING_EXTRATABLE) {
+                debugging('Performance warning: section_condition_info constructor is
+                    faster if you pass in a $section from get_fast_modinfo.
+                    [This warning can be disabled, see phpdoc.]',
+                    DEBUG_DEVELOPER);
+            }
+            self::fill_availability_conditions($this->section);
+        }
+    }
+
+    /**
+     * Adds the extra availability conditions (if any) into the given
+     * section object.
+     *
+     * @global object
+     * @global object
+     * @param object $section Moodle section
+     */
+    public static function fill_availability_conditions(&$section) {
+        if (empty($section->id)) {
+            throw new coding_exception("Invalid parameters; section ID not included");
+        }
+
+        // Does nothing if the variables are already present
+        if (!isset($section->conditionsgrade) ||
+            !isset($section->conditionscompletion)) {
+            $section->conditionsgrade=array();
+            $section->conditionscompletion=array();
+
+            global $DB, $CFG;
+            $conditions = $DB->get_records_sql("
+SELECT
+    csa.id as csaid, gi.*,csa.sourcecmid,csa.requiredcompletion,csa.gradeitemid,
+    csa.grademin as conditiongrademin, csa.grademax as conditiongrademax
+FROM
+    {course_sections_availability} csa
+    LEFT JOIN {grade_items} gi ON gi.id=csa.gradeitemid
+WHERE
+    coursesectionid=?",array($section->id));
+            foreach ($conditions as $condition) {
+                if (!is_null($condition->sourcecmid)) {
+                    $section->conditionscompletion[$condition->sourcecmid] =
+                        $condition->requiredcompletion;
+                } else {
+                    $minmax = new stdClass;
+                    $minmax->min = $condition->conditiongrademin;
+                    $minmax->max = $condition->conditiongrademax;
+                    $minmax->name = condition_info::get_grade_name($condition);
+                    $section->conditionsgrade[$condition->gradeitemid] = $minmax;
+                }
+            }
+        }
+    }
+
+
+
+    public static function get_course_sections_conditions($courseid) {
+        global $DB;
+
+        $conditions = $DB->get_records_sql("
+SELECT
+    csa.id as csaid, gi.*,csa.sourcecmid,csa.requiredcompletion,csa.gradeitemid,
+    csa.grademin as conditiongrademin, csa.grademax as conditiongrademax
+FROM
+    {course_sections} s
+    INNER JOIN {course_sections_availability} csa ON s.id = csa.coursesectionid
+    LEFT JOIN {grade_items} gi ON gi.id=csa.gradeitemid
+WHERE
+    s.course=?",array($courseid));
+
+        $return = array();
+        foreach ($conditions as $condition) {
+            $return[$condition->coursesectionid][] = $condition;
+        }
+        return $return;
+    }
+
+    /**
+     * @see require_data()
+     * @return object A section object with all the information required to
+     *   determine availability.
+     */
+    public function get_full_course_section() {
+        $this->require_data();
+        return $this->section;
+    }
+
+    /**
+     * Adds to the database a condition based on completion of another module.
+     *
+     * @global object
+     * @param int $cmid ID of other module
+     * @param int $requiredcompletion COMPLETION_xx constant
+     */
+    public function add_completion_condition($cmid, $requiredcompletion) {
+        // Add to DB
+        global $DB;
+        $DB->insert_record('course_sections_availability',
+            (object)array('coursesectionid'=>$this->section->id,
+                'sourcecmid'=>$cmid, 'requiredcompletion'=>$requiredcompletion),
+            false);
+
+        // Store in memory too
+        $this->section->conditionscompletion[$cmid] = $requiredcompletion;
+    }
+
+    /**
+     * Adds to the database a condition based on the value of a grade item.
+     *
+     * @global object
+     * @param int $gradeitemid ID of grade item
+     * @param float $min Minimum grade (>=), up to 5 decimal points, or null if none
+     * @param float $max Maximum grade (<), up to 5 decimal points, or null if none
+     * @param bool $updateinmemory If true, updates data in memory; otherwise,
+     *   memory version may be out of date (this has performance consequences,
+     *   so don't do it unless it really needs updating)
+     */
+    public function add_grade_condition($gradeitemid, $min, $max, $updateinmemory=false) {
+        // Normalise nulls
+        if ($min==='') {
+            $min = null;
+        }
+        if ($max==='') {
+            $max = null;
+        }
+        // Add to DB
+        global $DB;
+        $DB->insert_record('course_sections_availability',
+            (object)array('coursesectionid'=>$this->section->id,
+                'gradeitemid'=>$gradeitemid, 'grademin'=>$min, 'grademax'=>$max),
+            false);
+
+        // Store in memory too
+        if ($updateinmemory) {
+            $this->section->conditionsgrade[$gradeitemid]=(object)array(
+                'min'=>$min,
+                'max'=>$max,
+                'name'=>self::get_grade_name($DB->get_record('grade_items',
+                    array('id'=>$gradeitemid)))
+            );
+        }
+    }
+
+    /**
+     * Erases from the database all conditions for this activity.
+     *
+     * @global object
+     */
+    public function wipe_conditions() {
+        // Wipe from DB
+        global $DB;
+        $DB->delete_records('course_sections_availability',
+            array('coursesectionid'=>$this->section->id));
+
+        // And from memory
+        $this->section->conditionsgrade = array();
+        $this->section->conditionscompletion = array();
+    }
+
+    /**
+     * Obtains a string describing all availability restrictions (even if
+     * they do not apply any more).
+     *
+     * @global object
+     * @global object
+     * @param object $modinfo Usually leave as null for default. Specify when
+     *   calling recursively from inside get_fast_modinfo. The value supplied
+     *   here must include list of all CMs with 'id' and 'name'
+     * @return string Information string (for admin) about all restrictions on
+     *   this item
+     */
+    public function get_full_information($modinfo=null) {
+        $this->require_data();
+        global $COURSE, $DB;
+
+        $information = '';
+
+        // Completion conditions
+        if(count($this->section->conditionscompletion)>0) {
+            if ($this->section->course==$COURSE->id) {
+                $course = $COURSE;
+            } else {
+                $course = $DB->get_record('course',array('id'=>$this->section->course),'id,enablecompletion,modinfo');
+            }
+            $modinfo = get_fast_modinfo($course);
+            foreach ($this->cm->conditionscompletion as $cmid=>$expectedcompletion) {
+                if (empty($modinfo->cms[$cmid])) {
+                    continue;
+                }
+                $information .= get_string(
+                    'requires_completion_'.$expectedcompletion,
+                    'condition', $modinfo->cms[$cmid]->name).' ';
+            }
+        }
+
+        // Grade conditions
+        if (count($this->section->conditionsgrade)>0) {
+            foreach ($this->section->conditionsgrade as $gradeitemid=>$minmax) {
+                // String depends on type of requirement. We are coy about
+                // the actual numbers, in case grades aren't released to
+                // students.
+                if (is_null($minmax->min) && is_null($minmax->max)) {
+                    $string = 'any';
+                } else if (is_null($minmax->max)) {
+                    $string = 'min';
+                } else if (is_null($minmax->min)) {
+                    $string = 'max';
+                } else {
+                    $string = 'range';
+                }
+                $information .= get_string('requires_grade_'.$string, 'condition', $minmax->name).' ';
+            }
+        }
+
+        // Dates
+        if ($this->section->availablefrom && $this->section->availableuntil) {
+            $information .= get_string('requires_date_both', 'condition',
+                (object)array(
+                    'from' => condition_info::show_time($this->section->availablefrom, false),
+                    'until' => condition_info::show_time($this->section->availableuntil, true)));
+        } else if ($this->section->availablefrom) {
+            $information .= get_string('requires_date', 'condition',
+                condition_info::show_time($this->section->availablefrom, false));
+        } else if ($this->section->availableuntil) {
+            $information .= get_string('requires_date_before', 'condition',
+                condition_info::show_time($this->section->availableuntil, true));
+        }
+
+        $information = trim($information);
+        return $information;
+    }
+
+    /**
+     * Determines whether this particular section is currently available
+     * according to these criteria.
+     *
+     * - This does not include the 'visible' setting (i.e. this might return
+     *   true even if visible is false); visible is handled independently.
+     * - This does not take account of the viewhiddenactivities capability.
+     *   That should apply later.
+     *
+     * @global object
+     * @global object
+     * @uses COMPLETION_COMPLETE
+     * @uses COMPLETION_COMPLETE_FAIL
+     * @uses COMPLETION_COMPLETE_PASS
+     * @param string $information If the item has availability restrictions,
+     *   a string that describes the conditions will be stored in this variable;
+     *   if this variable is set blank, that means don't display anything
+     * @param bool $grabthelot Performance hint: if true, caches information
+     *   required for all course-modules, to make the front page and similar
+     *   pages work more quickly (works only for current user)
+     * @param int $userid If set, specifies a different user ID to check availability for
+     * @param object $modinfo Usually leave as null for default. Specify when
+     *   calling recursively from inside get_fast_modinfo. The value supplied
+     *   here must include list of all CMs with 'id' and 'name'
+     * @return bool True if this item is available to the user, false otherwise
+     */
+    public function is_available(&$information, $grabthelot=false, $userid=0, $modinfo=null) {
+        $this->require_data();
+        global $COURSE,$DB;
+
+        $available = true;
+        $information = '';
+
+        // Check each completion condition
+        if(count($this->section->conditionscompletion)>0) {
+            if ($this->section->course==$COURSE->id) {
+                $course = $COURSE;
+            } else {
+                $course = $DB->get_record('course',array('id'=>$this->section->course),'id,enablecompletion,modinfo');
+            }
+
+            $completion = new completion_info($course);
+            foreach ($this->section->conditionscompletion as $cmid=>$expectedcompletion) {
+                // If this depends on a deleted module, handle that situation
+                // gracefully.
+                if (!$modinfo) {
+                    $modinfo = get_fast_modinfo($course);
+                }
+                if (empty($modinfo->cms[$cmid])) {
+                    global $PAGE, $UNITTEST;
+                    if (!empty($UNITTEST) || (isset($PAGE) && strpos($PAGE->pagetype, 'course-view-')===0)) {
+                        $sectioname = get_section_name($course, $this->section);
+                        debugging("Warning: section {$this->section->id} '{$sectioname}' has condition on deleted activity $cmid (to get rid of this message, edit the named section)");
+                    }
+                    continue;
+                }
+
+                // The completion system caches its own data
+                $completiondata = $completion->get_data((object)array('id'=>$cmid),
+                    $grabthelot, $userid, $modinfo);
+
+                $thisisok = true;
+                if ($expectedcompletion==COMPLETION_COMPLETE) {
+                    // 'Complete' also allows the pass, fail states
+                    switch ($completiondata->completionstate) {
+                        case COMPLETION_COMPLETE:
+                        case COMPLETION_COMPLETE_FAIL:
+                        case COMPLETION_COMPLETE_PASS:
+                            break;
+                        default:
+                            $thisisok = false;
+                    }
+                } else {
+                    // Other values require exact match
+                    if ($completiondata->completionstate!=$expectedcompletion) {
+                        $thisisok = false;
+                    }
+                }
+                if (!$thisisok) {
+                    $available = false;
+                    $information .= get_string(
+                        'requires_completion_'.$expectedcompletion,
+                        'condition',$modinfo->cms[$cmid]->name).' ';
+                }
+            }
+        }
+
+        // Check each grade condition
+        if (count($this->section->conditionsgrade)>0) {
+            foreach ($this->section->conditionsgrade as $gradeitemid=>$minmax) {
+                $score = $this->get_cached_grade_score($gradeitemid, $grabthelot, $userid);
+                if ($score===false ||
+                    (!is_null($minmax->min) && $score<$minmax->min) ||
+                    (!is_null($minmax->max) && $score>=$minmax->max)) {
+                    // Grade fail
+                    $available = false;
+                    // String depends on type of requirement. We are coy about
+                    // the actual numbers, in case grades aren't released to
+                    // students.
+                    if (is_null($minmax->min) && is_null($minmax->max)) {
+                        $string = 'any';
+                    } else if (is_null($minmax->max)) {
+                        $string = 'min';
+                    } else if (is_null($minmax->min)) {
+                        $string = 'max';
+                    } else {
+                        $string = 'range';
+                    }
+                    $information .= get_string('requires_grade_'.$string, 'condition', $minmax->name).' ';
+                }
+            }
+        }
+
+        // Test dates
+        if ($this->section->availablefrom) {
+            if (time() < $this->section->availablefrom) {
+                $available = false;
+
+                $information .= get_string('requires_date', 'condition',
+                    condition_info::show_time($this->section->availablefrom, false));
+            }
+        }
+
+        if ($this->section->availableuntil) {
+            if (time() >= $this->section->availableuntil) {
+                $available = false;
+                // But we don't display any information about this case. This is
+                // because the only reason to set a 'disappear' date is usually
+                // to get rid of outdated information/clutter in which case there
+                // is no point in showing it...
+
+                // Note it would be nice if we could make it so that the 'until'
+                // date appears below the item while the item is still accessible,
+                // unfortunately this is not possible in the current system. Maybe
+                // later, or if somebody else wants to add it.
+            }
+        }
+
+        $information=trim($information);
+        return $available;
+    }
+
+    /**
+     * @return bool True if information about availability should be shown to
+     *   normal users
+     * @throws coding_exception If data wasn't loaded
+     */
+    public function show_availability() {
+        $this->require_data();
+        return $this->section->showavailability;
+    }
+
+    /**
+     * Internal function cheks that data was loaded.
+     *
+     * @return void throws coding_exception If data wasn't loaded
+     */
+    private function require_data() {
+        if (!$this->gotdata) {
+            throw new coding_exception('Error: cannot call when info was '.
+                'constructed without data');
+        }
+    }
+
+    /**
+     * Obtains a grade score. Note that this score should not be displayed to
+     * the user, because gradebook rules might prohibit that. It may be a
+     * non-final score subject to adjustment later.
+     *
+     * @global object
+     * @global object
+     * @global object
+     * @param int $gradeitemid Grade item ID we're interested in
+     * @param bool $grabthelot If true, grabs all scores for current user on
+     *   this course, so that later ones come from cache
+     * @param int $userid Set if requesting grade for a different user (does
+     *   not use cache)
+     * @return float Grade score as a percentage in range 0-100 (e.g. 100.0
+     *   or 37.21), or false if user does not have a grade yet
+     */
+    private function get_cached_grade_score($gradeitemid, $grabthelot=false, $userid=0) {
+        global $USER, $DB, $SESSION;
+        if ($userid==0 || $userid==$USER->id) {
+            // For current user, go via cache in session
+            if (empty($SESSION->gradescorecache) || $SESSION->gradescorecacheuserid!=$USER->id) {
+                $SESSION->gradescorecache = array();
+                $SESSION->gradescorecacheuserid = $USER->id;
+            }
+            if (!array_key_exists($gradeitemid, $SESSION->gradescorecache)) {
+                if ($grabthelot) {
+                    // Get all grades for the current course
+                    $rs = $DB->get_recordset_sql("
+SELECT
+    gi.id,gg.finalgrade,gg.rawgrademin,gg.rawgrademax
+FROM
+    {grade_items} gi
+    LEFT JOIN {grade_grades} gg ON gi.id=gg.itemid AND gg.userid=?
+WHERE
+    gi.courseid=?", array($USER->id, $this->section->course));
+                    foreach ($rs as $record) {
+                        $SESSION->gradescorecache[$record->id] =
+                            is_null($record->finalgrade)
+                                // No grade = false
+                                ? false
+                                // Otherwise convert grade to percentage
+                                : (($record->finalgrade - $record->rawgrademin) * 100) /
+                                    ($record->rawgrademax - $record->rawgrademin);
+
+                    }
+                    $rs->close();
+                    // And if it's still not set, well it doesn't exist (eg
+                    // maybe the user set it as a condition, then deleted the
+                    // grade item) so we call it false
+                    if (!array_key_exists($gradeitemid, $SESSION->gradescorecache)) {
+                        $SESSION->gradescorecache[$gradeitemid] = false;
+                    }
+                } else {
+                    // Just get current grade
+                    $record = $DB->get_record('grade_grades', array(
+                        'userid'=>$USER->id, 'itemid'=>$gradeitemid));
+                    if ($record && !is_null($record->finalgrade)) {
+                        $score = (($record->finalgrade - $record->rawgrademin) * 100) /
+                            ($record->rawgrademax - $record->rawgrademin);
+                    } else {
+                        // Treat the case where row exists but is null, same as
+                        // case where row doesn't exist
+                        $score = false;
+                    }
+                    $SESSION->gradescorecache[$gradeitemid]=$score;
+                }
+            }
+            return $SESSION->gradescorecache[$gradeitemid];
+        } else {
+            // Not the current user, so request the score individually
+            $record = $DB->get_record('grade_grades', array(
+                'userid'=>$userid, 'itemid'=>$gradeitemid));
+            if ($record && !is_null($record->finalgrade)) {
+                $score = (($record->finalgrade - $record->rawgrademin) * 100) /
+                    ($record->rawgrademax - $record->rawgrademin);
+            } else {
+                // Treat the case where row exists but is null, same as
+                // case where row doesn't exist
+                $score = false;
+            }
+            return $score;
+        }
+    }
+
+    /**
+     * Utility function called by modedit.php; updates the
+     * course_modules_availability table based on the module form data.
+     *
+     * @param object $cm Course-module with as much data as necessary, min id
+     * @param object $fromform
+     * @param bool $wipefirst Defaults to true
+     */
+    public static function update_section_from_form($section, $fromform, $wipefirst=true) {
+        $ci=new section_condition_info($section, CONDITION_MISSING_EVERYTHING, false);
+        if ($wipefirst) {
+            $ci->wipe_conditions();
+        }
+        foreach ($fromform->conditiongradegroup as $record) {
+            if($record['conditiongradeitemid']) {
+                $ci->add_grade_condition($record['conditiongradeitemid'],
+                    $record['conditiongrademin'],$record['conditiongrademax']);
+            }
+        }
+        if(isset ($fromform->conditioncompletiongroup)) {
+            foreach($fromform->conditioncompletiongroup as $record) {
+                if($record['conditionsourcecmid']) {
+                    $ci->add_completion_condition($record['conditionsourcecmid'],
+                        $record['conditionrequiredcompletion']);
+                }
+            }
+        }
+    }
+
+    /**
+     * Used in course/lib.php because we need to disable the completion JS if
+     * a completion value affects a conditional activity.
+     *
+     * @global object
+     * @param object $course Moodle course object
+     * @param object $cm Moodle course-module
+     * @return bool True if this is used in a condition, false otherwise
+     * @todo Add section support...
+     */
+    public static function completion_value_used_as_condition($course, $cm) {
+        // Have we already worked out a list of required completion values
+        // for this course? If so just use that
+        global $CONDITIONLIB_PRIVATE;
+        if (!array_key_exists($course->id, $CONDITIONLIB_PRIVATE->usedincondition)) {
+            // We don't have data for this course, build it
+            $modinfo = get_fast_modinfo($course);
+            $CONDITIONLIB_PRIVATE->usedincondition[$course->id] = array();
+            foreach ($modinfo->cms as $othercm) {
+                foreach ($othercm->conditionscompletion as $cmid=>$expectedcompletion) {
+                    $CONDITIONLIB_PRIVATE->usedincondition[$course->id][$cmid] = true;
+                }
+            }
+        }
+        return array_key_exists($cm->id, $CONDITIONLIB_PRIVATE->usedincondition[$course->id]);
+    }
+}

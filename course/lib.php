@@ -1166,6 +1166,22 @@ function get_array_of_activities($courseid) {
     return $mod;
 }
 
+/**
+ * Get an array of sections for course cache.
+ *
+ * @param int $courseid
+ * @return array|section_info[]
+ */
+function get_array_of_sections($courseid) {
+    global $DB;
+
+    $return   = array();
+    $sections = $DB->get_records('course_sections', array('course' => $courseid), 'section');
+    foreach ($sections as $section) {
+        $return[$section->section] = new section_info($section);
+    }
+    return $return;
+}
 
 /**
  * Returns a number of useful structures for course displays
@@ -1899,7 +1915,15 @@ function rebuild_course_cache($courseid=0, $clearonly=false) {
 
     $rs = $DB->get_recordset("course", $select,'','id,fullname');
     foreach ($rs as $course) {
-        $modinfo = serialize(get_array_of_activities($course->id));
+        $modinfo  = get_array_of_activities($course->id);
+        $sections = get_array_of_sections($course->id);
+
+        // @todo Find a permanent storage solution for sections
+        foreach ($modinfo as $cmid => $mod) {
+            $modinfo[$cmid]->sections = $sections;
+            break;
+        }
+        $modinfo = serialize($modinfo);
         $DB->set_field("course", "modinfo", $modinfo, array("id"=>$course->id));
         // update cached global COURSE too ;-)
         if ($course->id == $COURSE->id) {
