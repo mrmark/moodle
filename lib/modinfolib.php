@@ -476,7 +476,8 @@ class section_info extends stdClass implements condition_availability {
                                          LEFT JOIN {grade_items} gi ON gi.id = csa.gradeitemid
                                              WHERE coursesectionid = ?
                                                AND ((csa.sourcecmid IS NOT NULL AND cm.id IS NOT NULL)
-                                                OR (csa.gradeitemid IS NOT NULL AND gi.id IS NOT NULL))", array($this->id));
+                                                OR (csa.gradeitemid IS NOT NULL AND gi.id IS NOT NULL))
+                                          ORDER BY csaid", array($this->id));
 
         foreach ($conditions as $condition) {
             if (!is_null($condition->sourcecmid)) {

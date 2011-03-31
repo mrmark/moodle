@@ -1229,19 +1229,6 @@ class condition_info_controller {
     protected $object;
 
     /**
-     * When processing conditions, do them in this order.
-     *
-     * This is lame-o, but need to bring order in somehow...
-     *
-     * @var array
-     */
-    protected $conditionorder = array(
-        'condition_completion',
-        'condition_grade',
-        'condition_daterange',
-    );
-
-    /**
      * @param condition_availability $object
      */
     public function __construct(condition_availability $object) {
@@ -1317,11 +1304,9 @@ class condition_info_controller {
         if (is_null($modinfo)) {
             $modinfo = get_fast_modinfo($course);
         }
-        foreach ($this->conditionorder as $classname) {
-            foreach ($this->get_conditions($classname) as $condition) {
-                if ($info = $condition->get_information($this->object, $course, $modinfo)) {
-                    $information[] = $info;
-                }
+        foreach ($this->get_conditions() as $condition) {
+            if ($info = $condition->get_information($this->object, $course, $modinfo)) {
+                $information[] = $info;
             }
         }
         return implode(' ', $information);
@@ -1361,16 +1346,14 @@ class condition_info_controller {
         if (is_null($modinfo)) {
             $modinfo = get_fast_modinfo($course);
         }
-        foreach ($this->conditionorder as $classname) {
-            foreach ($this->get_conditions($classname) as $condition) {
-                list($met, $info) = $condition->has_been_met(
-                    $this->object, $course, $modinfo, $userid, $grabthelot
-                );
-                if (!$met) {
-                    $available = false;
-                    if (!empty($info)) {
-                        $infos[] = $info;
-                    }
+        foreach ($this->get_conditions() as $condition) {
+            list($met, $info) = $condition->has_been_met(
+                $this->object, $course, $modinfo, $userid, $grabthelot
+            );
+            if (!$met) {
+                $available = false;
+                if (!empty($info)) {
+                    $infos[] = $info;
                 }
             }
         }
