@@ -708,25 +708,20 @@ abstract class condition_base extends stdClass {
      * user how to meet this condition.
      *
      * @abstract
-     * @param condition_availability $object The object that the condition is being applied
-     * @param object $course Course record object
-     * @param course_modinfo $modinfo
+     * @param course_modinfo $modinfo Must be set to proper course and user
      * @return string
      */
-    abstract public function get_information(condition_availability $object, $course, course_modinfo $modinfo);
+    abstract public function get_information(course_modinfo $modinfo);
 
     /**
      * Determine if the condition has been met by the user or not.
      *
      * @abstract
-     * @param condition_availability $object
-     * @param object $course The course record object
-     * @param course_modinfo $modinfo
-     * @param int $userid The user that this is being generated for
+     * @param course_modinfo $modinfo Must be set to proper course and user
      * @param bool $grabthelot Performance flag - grab things in bulk if true
      * @return array 0 index is boolean for available, 1 index is information string - used as reason why not available
      */
-    abstract public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false);
+    abstract public function has_been_met(course_modinfo $modinfo, $grabthelot = false);
 }
 
 /**
@@ -776,7 +771,7 @@ class condition_daterange extends condition_base {
      *
      * Generate a string to inform the user of the date limits.
      */
-    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+    public function get_information(course_modinfo $modinfo) {
         $from  = $this->get_availablefrom();
         $until = $this->get_availableuntil();
 
@@ -797,7 +792,7 @@ class condition_daterange extends condition_base {
      *
      * See if the current time is within our limits.
      */
-    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
+    public function has_been_met(course_modinfo $modinfo, $grabthelot = false) {
         $from  = $this->get_availablefrom();
         $until = $this->get_availableuntil();
 
@@ -944,7 +939,7 @@ class condition_grade extends condition_base {
      *
      * Tell the user in a neutral way what they need to score.
      */
-    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+    public function get_information(course_modinfo $modinfo) {
         $min = $this->get_min();
         $max = $this->get_max();
 
@@ -965,12 +960,12 @@ class condition_grade extends condition_base {
      *
      * See if the user has scored within our limits.
      */
-    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
+    public function has_been_met(course_modinfo $modinfo, $grabthelot = false) {
         $min   = $this->get_min();
         $max   = $this->get_max();
-        $score = $this->get_cached_grade_score($course, $this->get_gradeitemid(), $grabthelot, $userid);
+        $score = $this->get_cached_grade_score($modinfo, $this->get_gradeitemid(), $grabthelot);
         if ($score === false or (!is_null($min) and $score < $min) or (!is_null($max) and $score >= $max)) {
-            return array(false, $this->get_information($object, $course, $modinfo));
+            return array(false, $this->get_information($modinfo));
         }
         return array(true, '');
     }
@@ -983,17 +978,18 @@ class condition_grade extends condition_base {
      * @global object
      * @global object
      * @global object
-     * @param object $course Course record object
+     * @param course_modinfo $modinfo
      * @param int $gradeitemid Grade item ID we're interested in
      * @param bool $grabthelot If true, grabs all scores for current user on
      *   this course, so that later ones come from cache
-     * @param int $userid Set if requesting grade for a different user (does
-     *   not use cache)
      * @return float Grade score as a percentage in range 0-100 (e.g. 100.0
      *   or 37.21), or false if user does not have a grade yet
      */
-    private function get_cached_grade_score($course, $gradeitemid, $grabthelot=false, $userid=0) {
+    private function get_cached_grade_score(course_modinfo $modinfo, $gradeitemid, $grabthelot=false) {
         global $USER, $DB, $SESSION;
+
+        $userid = $modinfo->get_user_id();
+
         if ($userid==0 || $userid==$USER->id) {
             // For current user, go via cache in session
             if (empty($SESSION->gradescorecache) || $SESSION->gradescorecacheuserid!=$USER->id) {
@@ -1010,7 +1006,7 @@ FROM
     {grade_items} gi
     LEFT JOIN {grade_grades} gg ON gi.id=gg.itemid AND gg.userid=?
 WHERE
-    gi.courseid=?", array($USER->id, $course->id));
+    gi.courseid=?", array($USER->id, $modinfo->get_course_id()));
                     foreach ($rs as $record) {
                         $SESSION->gradescorecache[$record->id] =
                             is_null($record->finalgrade)
@@ -1125,7 +1121,7 @@ class condition_completion extends condition_base {
      *
      * Let the user know what condition must be met on which activity
      */
-    public function get_information(condition_availability $object, $course, course_modinfo $modinfo) {
+    public function get_information(course_modinfo $modinfo) {
         try {
             $cm = $modinfo->get_cm($this->get_cmid());
 
@@ -1144,12 +1140,12 @@ class condition_completion extends condition_base {
      *
      * See if the user has met the completion condition
      */
-    public function has_been_met(condition_availability $object, $course, course_modinfo $modinfo, $userid = 0, $grabthelot = false) {
-        $completion = new completion_info($course);
+    public function has_been_met(course_modinfo $modinfo, $grabthelot = false) {
+        $completion = new completion_info($modinfo->get_course());
 
         // The completion system caches its own data
         $completiondata = $completion->get_data(
-            (object) array('id' => $this->get_cmid()), $grabthelot, $userid, $modinfo
+            (object) array('id' => $this->get_cmid()), $grabthelot, $modinfo->get_user_id(), $modinfo
         );
 
         $met = true;
@@ -1171,7 +1167,7 @@ class condition_completion extends condition_base {
         }
         $information = '';
         if (!$met) {
-            $information = $this->get_information($object, $course, $modinfo);
+            $information = $this->get_information($modinfo);
         }
         return array($met, $information);
     }
@@ -1182,6 +1178,14 @@ class condition_completion extends condition_base {
  * by availability conditions.  Used by {@see condition_info_controller}
  */
 interface condition_availability {
+    /**
+     * Get conditions associated with the object.
+     *
+     * @abstract
+     * @return array|condition_base[]
+     */
+    public function get_conditions();
+
     /**
      * Given a condition, save it to the database
      *
@@ -1199,22 +1203,6 @@ interface condition_availability {
      * @return void
      */
     public function delete_conditions();
-
-    /**
-     * Get the course ID that this object is related to
-     *
-     * @abstract
-     * @return int
-     */
-    public function get_courseid();
-
-    /**
-     * Get conditions associated with the object.
-     *
-     * @abstract
-     * @return array|condition_base[]
-     */
-    public function get_conditions();
 }
 
 /**
@@ -1268,44 +1256,18 @@ class condition_info_controller {
     }
 
     /**
-     * @return object
-     */
-    public function get_course() {
-        global $COURSE, $DB;
-
-        if ($this->object->get_courseid() == $COURSE->id) {
-            return $COURSE;
-        } else {
-            return $DB->get_record(
-                'course',
-                array('id' => $this->object->get_courseid()),
-                'id, enablecompletion, modinfo',
-                MUST_EXIST
-            );
-        }
-    }
-
-    /**
      * Obtains a string describing all availability restrictions (even if
      * they do not apply any more).
      *
-     * @global object
-     * @global object
-     * @param object $modinfo Usually leave as null for default. Specify when
-     *   calling recursively from inside get_fast_modinfo. The value supplied
-     *   here must include list of all CMs with 'id' and 'name'
+     * @param course_modinfo $modinfo Set to the proper course and user
      * @return string Information string (for admin) about all restrictions on
      *   this item
      */
-    public function get_full_information($modinfo = null) {
-        $course      = $this->get_course();
-        $information = array();
+    public function get_full_information(course_modinfo $modinfo) {
 
-        if (is_null($modinfo)) {
-            $modinfo = get_fast_modinfo($course);
-        }
+        $information = array();
         foreach ($this->get_conditions() as $condition) {
-            if ($info = $condition->get_information($this->object, $course, $modinfo)) {
+            if ($info = $condition->get_information($modinfo)) {
                 $information[] = $info;
             }
         }
@@ -1313,43 +1275,24 @@ class condition_info_controller {
     }
 
     /**
-     * Determines whether this particular section is currently available
-     * according to these criteria.
+     * Determines if condition_availability object is available or not based
+     * only on its set conditions.
      *
-     * - This does not include the 'visible' setting (i.e. this might return
-     *   true even if visible is false); visible is handled independently.
-     * - This does not take account of the viewhiddenactivities capability.
-     *   That should apply later.
-     *
-     * @global object
-     * @global object
-     * @uses COMPLETION_COMPLETE
-     * @uses COMPLETION_COMPLETE_FAIL
-     * @uses COMPLETION_COMPLETE_PASS
      * @param string $information If the item has availability restrictions,
      *   a string that describes the conditions will be stored in this variable;
      *   if this variable is set blank, that means don't display anything
-     * @param bool $grabthelot Performance hint: if true, caches information
-     *   required for all course-modules, to make the front page and similar
-     *   pages work more quickly (works only for current user)
-     * @param int $userid If set, specifies a different user ID to check availability for
-     * @param object $modinfo Usually leave as null for default. Specify when
-     *   calling recursively from inside get_fast_modinfo. The value supplied
-     *   here must include list of all CMs with 'id' and 'name'
+     * @param course_modinfo $modinfo Set to correct course and user
+     * @param bool $grabthelot Performance flag: if true then try to do things as efficient
+     *   as possible (works only for current user)
      * @return bool True if this item is available to the user, false otherwise
      */
-    public function is_available(&$information, $grabthelot=false, $userid=0, $modinfo=null) {
+    public function is_available(&$information, course_modinfo $modinfo, $grabthelot = false) {
         $available = true;
         $infos     = array();
-        $course    = $this->get_course();
 
-        if (is_null($modinfo)) {
-            $modinfo = get_fast_modinfo($course);
-        }
         foreach ($this->get_conditions() as $condition) {
-            list($met, $info) = $condition->has_been_met(
-                $this->object, $course, $modinfo, $userid, $grabthelot
-            );
+            list($met, $info) = $condition->has_been_met($modinfo, $grabthelot);
+
             if (!$met) {
                 $available = false;
                 if (!empty($info)) {

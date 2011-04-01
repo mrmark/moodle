@@ -515,7 +515,7 @@ class section_info extends stdClass implements condition_availability {
         if ($CFG->enableavailability) {
             $ci = new condition_info_controller($this);
             $this->available = $ci->is_available(
-                $this->availableinfo, true, $modinfo->get_user_id(), $modinfo
+                $this->availableinfo, $modinfo, true
             );
             $this->availablefullinfo = $ci->get_full_information($modinfo);
         }
@@ -534,15 +534,6 @@ class section_info extends stdClass implements condition_availability {
             !has_capability('moodle/course:viewhiddensections', get_context_instance(CONTEXT_COURSE, $this->course), $modinfo->get_user_id())) {
             $this->uservisible = false;
         }
-    }
-
-    /**
-     * {@inheritdoc}
-     *
-     * Interface method
-     */
-    public function get_courseid() {
-        return $this->course;
     }
 
     /**
