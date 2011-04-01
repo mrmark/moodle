@@ -1391,9 +1391,12 @@ function get_section_show($section, $course, course_modinfo $modinfo = NULL) {
     global $CFG;
 
     $context     = get_context_instance(CONTEXT_COURSE, $course->id);
-    $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $section->visible or !$course->hiddensections);
+    $showsection = true;
 
-    if ($showsection and !empty($CFG->enableavailability)) {
+    if (has_capability('moodle/course:viewhiddensections', $context)) {
+        return $showsection;
+    }
+    if (($section->visible or !$course->hiddensections) and !empty($CFG->enableavailability)) {
         if (is_null($modinfo)) {
             $modinfo = get_fast_modinfo($course);
         }
