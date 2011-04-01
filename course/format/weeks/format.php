@@ -79,38 +79,50 @@ defined('MOODLE_INTERNAL') || die();
     $thissection = $sections[$section];
     unset($sections[0]);
 
-    if ($thissection->summary or $thissection->sequence or $PAGE->user_is_editing()) {
+    $showsection = get_section_show($thissection, $modinfo);
 
+    if (($thissection->summary or $thissection->sequence or $PAGE->user_is_editing()) and $showsection) {
         // Note, 'right side' is BEFORE content.
         echo '<li id="section-0" class="section main clearfix" >';
         echo '<div class="left side">&nbsp;</div>';
         echo '<div class="right side" >&nbsp;</div>';
         echo '<div class="content">';
 
-        if (!empty($thissection->name)) {
-            echo $OUTPUT->heading($thissection->name, 3, 'sectionname');
+        if (!empty($CFG->enableavailability)) {
+            // This can still be false!  Check PHPDoc for more info.
+            $sectioninfo = $modinfo->get_section($thissection->section);
+        } else {
+            $sectioninfo = false;
         }
+        if ($sectioninfo and !$sectioninfo->uservisible) {
+            echo $OUTPUT->heading($thissection->name.' ('.$sectioninfo->availableinfo.')', 3, 'weekdates');
+        } else {
+            $availibility = get_section_full_availability_info($thissection, $modinfo);
+            if (!empty($thissection->name) or !empty($availibility)) {
+                echo $OUTPUT->heading($thissection->name.$availibility, 3, 'sectionname');
+            }
 
-        echo '<div class="summary">';
+            echo '<div class="summary">';
 
-        $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
-        $summarytext = file_rewrite_pluginfile_urls($thissection->summary, 'pluginfile.php', $coursecontext->id, 'course', 'section', $thissection->id);
-        $summaryformatoptions = new stdClass;
-        $summaryformatoptions->noclean = true;
-        $summaryformatoptions->overflowdiv = true;
-        echo format_text($summarytext, $thissection->summaryformat, $summaryformatoptions);
+            $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+            $summarytext = file_rewrite_pluginfile_urls($thissection->summary, 'pluginfile.php', $coursecontext->id, 'course', 'section', $thissection->id);
+            $summaryformatoptions = new stdClass;
+            $summaryformatoptions->noclean = true;
+            $summaryformatoptions->overflowdiv = true;
+            echo format_text($summarytext, $thissection->summaryformat, $summaryformatoptions);
 
-        if ($PAGE->user_is_editing() && has_capability('moodle/course:update', get_context_instance(CONTEXT_COURSE, $course->id))) {
-            echo '<p><a title="'.$streditsummary.'" '.
-                 ' href="editsection.php?id='.$thissection->id.'"><img src="'.$OUTPUT->pix_url('t/edit') . '" '.
-                 ' class="icon edit" alt="'.$streditsummary.'" /></a></p>';
-        }
-        echo '</div>';
+            if ($PAGE->user_is_editing() && has_capability('moodle/course:update', get_context_instance(CONTEXT_COURSE, $course->id))) {
+                echo '<p><a title="'.$streditsummary.'" '.
+                     ' href="editsection.php?id='.$thissection->id.'"><img src="'.$OUTPUT->pix_url('t/edit') . '" '.
+                     ' class="icon edit" alt="'.$streditsummary.'" /></a></p>';
+            }
+            echo '</div>';
 
-        print_section($course, $thissection, $mods, $modnamesused);
+            print_section($course, $thissection, $mods, $modnamesused);
 
-        if ($PAGE->user_is_editing()) {
-            print_section_add_menus($course, $section, $modnames);
+            if ($PAGE->user_is_editing()) {
+                print_section_add_menus($course, $section, $modnames);
+            }
         }
 
         echo '</div>';
@@ -151,7 +163,7 @@ defined('MOODLE_INTERNAL') || die();
             $thissection->id = $DB->insert_record('course_sections', $thissection);
         }
 
-        $showsection = get_section_show($thissection, $course, $modinfo);
+        $showsection = get_section_show($thissection, $modinfo);
 
         if (!empty($displaysection) and $displaysection != $section) {  // Check this week is visible
             if ($showsection) {
@@ -229,7 +241,7 @@ defined('MOODLE_INTERNAL') || die();
                 echo $OUTPUT->heading($currenttext.$weekperiod.' ('.$sectioninfo->availableinfo.')', 3, 'weekdates');
 
             } else {
-                $availibility = get_section_full_availability_info($thissection, $course, $modinfo);
+                $availibility = get_section_full_availability_info($thissection, $modinfo);
                 if (isset($thissection->name) && ($thissection->name !== NULL)) {  // empty string is ok
                     echo $OUTPUT->heading($thissection->name.$availibility, 3, 'weekdates');
                 } else {

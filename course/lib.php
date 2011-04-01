@@ -1383,20 +1383,20 @@ function get_print_section_cm_text(cm_info $cm, $course) {
  * Determine if a section should be shown
  *
  * @param object $section The section
- * @param object $course The course object
- * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @param course_modinfo $modinfo The section's course's modinfo
  * @return bool
  */
-function get_section_show($section, $course, course_modinfo $modinfo = NULL) {
+function get_section_show($section, course_modinfo $modinfo) {
     global $CFG;
 
+    $course      = $modinfo->get_course();
     $context     = get_context_instance(CONTEXT_COURSE, $course->id);
-    $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $section->visible or !$course->hiddensections);
+    $showsection = true;
 
-    if ($showsection and !empty($CFG->enableavailability)) {
-        if (is_null($modinfo)) {
-            $modinfo = get_fast_modinfo($course);
-        }
+    if (has_capability('moodle/course:viewhiddensections', $context)) {
+        return $showsection;
+    }
+    if (($section->visible or !$course->hiddensections) and !empty($CFG->enableavailability)) {
         // This can still be false!  Check PHPDoc for more info.
         $sectioninfo = $modinfo->get_section($section->section);
 
@@ -1415,22 +1415,18 @@ function get_section_show($section, $course, course_modinfo $modinfo = NULL) {
  * Get full availability information string for a section
  *
  * @param object $section The section
- * @param object $course The course object
- * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @param course_modinfo $modinfo The section's course's modinfo
  * @return string
  */
-function get_section_full_availability_info($section, $course, course_modinfo $modinfo = NULL) {
+function get_section_full_availability_info($section, course_modinfo $modinfo) {
     global $CFG;
 
     $availibility = '';
 
     if (!empty($CFG->enableavailability)) {
-        if (is_null($modinfo)) {
-            $modinfo = get_fast_modinfo($course);
-        }
         // This can still be false!  Check PHPDoc for more info.
         $sectioninfo = $modinfo->get_section($section->section);
-        $context     = get_context_instance(CONTEXT_COURSE, $course->id);
+        $context     = get_context_instance(CONTEXT_COURSE, $modinfo->get_course_id());
 
         if (has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !empty($sectioninfo->availablefullinfo)) {
             $information = get_string(

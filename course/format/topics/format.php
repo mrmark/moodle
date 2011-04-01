@@ -87,7 +87,9 @@ $section = 0;
 $thissection = $sections[$section];
 unset($sections[0]);
 
-if ($thissection->summary or $thissection->sequence or $PAGE->user_is_editing()) {
+$showsection = get_section_show($thissection, $modinfo);
+
+if (($thissection->summary or $thissection->sequence or $PAGE->user_is_editing()) and $showsection) {
 
     // Note, no need for a 'left side' cell or DIV.
     // Note, 'right side' is BEFORE content.
@@ -95,29 +97,41 @@ if ($thissection->summary or $thissection->sequence or $PAGE->user_is_editing())
     echo '<div class="left side">&nbsp;</div>';
     echo '<div class="right side" >&nbsp;</div>';
     echo '<div class="content">';
-    if (!is_null($thissection->name)) {
-        echo $OUTPUT->heading($thissection->name, 3, 'sectionname');
+
+    if (!empty($CFG->enableavailability)) {
+        // This can still be false!  Check PHPDoc for more info.
+        $sectioninfo = $modinfo->get_section($thissection->section);
+    } else {
+        $sectioninfo = false;
     }
-    echo '<div class="summary">';
+    if ($sectioninfo and !$sectioninfo->uservisible) {
+        echo html_writer::tag('div', $sectioninfo->availableinfo, array('class' => 'availabilityinfo'));
+    } else {
+        if (!is_null($thissection->name)) {
+            echo $OUTPUT->heading($thissection->name, 3, 'sectionname');
+        }
+        echo get_section_full_availability_info($thissection, $modinfo);
+        echo '<div class="summary">';
 
-    $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
-    $summarytext = file_rewrite_pluginfile_urls($thissection->summary, 'pluginfile.php', $coursecontext->id, 'course', 'section', $thissection->id);
-    $summaryformatoptions = new stdClass();
-    $summaryformatoptions->noclean = true;
-    $summaryformatoptions->overflowdiv = true;
-    echo format_text($summarytext, $thissection->summaryformat, $summaryformatoptions);
+        $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+        $summarytext = file_rewrite_pluginfile_urls($thissection->summary, 'pluginfile.php', $coursecontext->id, 'course', 'section', $thissection->id);
+        $summaryformatoptions = new stdClass();
+        $summaryformatoptions->noclean = true;
+        $summaryformatoptions->overflowdiv = true;
+        echo format_text($summarytext, $thissection->summaryformat, $summaryformatoptions);
 
-    if ($PAGE->user_is_editing() && has_capability('moodle/course:update', $coursecontext)) {
-        echo '<a title="'.$streditsummary.'" '.
-             ' href="editsection.php?id='.$thissection->id.'"><img src="'.$OUTPUT->pix_url('t/edit') . '" '.
-             ' class="icon edit" alt="'.$streditsummary.'" /></a>';
-    }
-    echo '</div>';
+        if ($PAGE->user_is_editing() && has_capability('moodle/course:update', $coursecontext)) {
+            echo '<a title="'.$streditsummary.'" '.
+                 ' href="editsection.php?id='.$thissection->id.'"><img src="'.$OUTPUT->pix_url('t/edit') . '" '.
+                 ' class="icon edit" alt="'.$streditsummary.'" /></a>';
+        }
+        echo '</div>';
 
-    print_section($course, $thissection, $mods, $modnamesused);
+        print_section($course, $thissection, $mods, $modnamesused);
 
-    if ($PAGE->user_is_editing()) {
-        print_section_add_menus($course, $section, $modnames);
+        if ($PAGE->user_is_editing()) {
+            print_section_add_menus($course, $section, $modnames);
+        }
     }
 
     echo '</div>';
@@ -148,7 +162,7 @@ while ($section <= $course->numsections) {
         $thissection->id = $DB->insert_record('course_sections', $thissection);
     }
 
-    $showsection = get_section_show($thissection, $course, $modinfo);
+    $showsection = get_section_show($thissection, $modinfo);
 
     if (!empty($displaysection) and $displaysection != $section) {  // Check this topic is visible
         if ($showsection) {
@@ -230,7 +244,7 @@ while ($section <= $course->numsections) {
             if (!is_null($thissection->name)) {
                 echo $OUTPUT->heading($thissection->name, 3, 'sectionname');
             }
-            echo get_section_full_availability_info($thissection, $course, $modinfo);
+            echo get_section_full_availability_info($thissection, $modinfo);
             echo '<div class="summary">';
             if ($thissection->summary) {
                 $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
