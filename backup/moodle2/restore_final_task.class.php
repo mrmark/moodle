@@ -62,6 +62,10 @@ class restore_final_task extends restore_task {
         // to match them with existing modules / grade items.
         $this->add_step(new restore_process_course_modules_availability('process_modules_availability'));
 
+        // Review all the module_availability records in backup_ids in order
+        // to match them with existing modules / grade items.
+        $this->add_step(new restore_process_course_sections_availability('process_sections_availability'));
+
         // Decode all the interlinks
         $this->add_step(new restore_decode_interlinks('decode_interlinks'));
 

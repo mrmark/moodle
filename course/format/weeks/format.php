@@ -151,7 +151,7 @@ defined('MOODLE_INTERNAL') || die();
             $thissection->id = $DB->insert_record('course_sections', $thissection);
         }
 
-        $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $thissection->visible or !$course->hiddensections);
+        $showsection = get_section_show($thissection, $course, $modinfo);
 
         if (!empty($displaysection) and $displaysection != $section) {  // Check this week is visible
             if ($showsection) {
@@ -214,15 +214,26 @@ defined('MOODLE_INTERNAL') || die();
 
             $weekperiod = $weekday.' - '.$endweekday;
 
+            if (!empty($CFG->enableavailability)) {
+                // This can still be false!  Check PHPDoc for more info.
+                $sectioninfo = $modinfo->get_section($thissection->section);
+            } else {
+                $sectioninfo = false;
+            }
+
             echo '<div class="content">';
             if (!has_capability('moodle/course:viewhiddensections', $context) and !$thissection->visible) {   // Hidden for students
                 echo $OUTPUT->heading($currenttext.$weekperiod.' ('.get_string('notavailable').')', 3, 'weekdates');
 
+            } else if ($sectioninfo and !$sectioninfo->uservisible) {
+                echo $OUTPUT->heading($currenttext.$weekperiod.' ('.$sectioninfo->availableinfo.')', 3, 'weekdates');
+
             } else {
+                $availibility = get_section_full_availability_info($thissection, $course, $modinfo);
                 if (isset($thissection->name) && ($thissection->name !== NULL)) {  // empty string is ok
-                    echo $OUTPUT->heading($thissection->name, 3, 'weekdates');
+                    echo $OUTPUT->heading($thissection->name.$availibility, 3, 'weekdates');
                 } else {
-                    echo $OUTPUT->heading($currenttext.$weekperiod, 3, 'weekdates');
+                    echo $OUTPUT->heading($currenttext.$weekperiod.$availibility, 3, 'weekdates');
                 }
                 echo '<div class="summary">';
                 $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);

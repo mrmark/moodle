@@ -32,6 +32,7 @@ if (!defined('MAX_MODINFO_CACHE_SIZE')) {
     define('MAX_MODINFO_CACHE_SIZE', 10);
 }
 
+require_once($CFG->libdir.'/conditionlib.php');
 
 /**
  * Information about a course that is cached in the course table 'modinfo' field (and then in
@@ -71,6 +72,12 @@ class course_modinfo extends stdClass {
      * @deprecated For new code, use get_sections instead
      */
     public $sections;
+
+    /**
+     * An array of section_info instances keyed by section ID
+     * @var array|section_info[]
+     */
+    protected $sectioninfo = array();
 
     /**
      * Array from int (cm id) => cm_info object
@@ -125,6 +132,32 @@ class course_modinfo extends stdClass {
      */
     public function get_sections() {
         return $this->sections;
+    }
+
+    /**
+     * Get section_info instance for a section.
+     *
+     * Due to the dynamic creation nature of sections, this
+     * may return false for brand new sections.  Once cache is
+     * rebuilt, the section will exist.
+     *
+     * @param int $sectionnum The section number (NOT SECTION ID)
+     * @return section_info|bool
+     */
+    public function get_section($sectionnum) {
+        if (array_key_exists($sectionnum, $this->sectioninfo)) {
+            return $this->sectioninfo[$sectionnum];
+        }
+        return false;
+    }
+
+    /**
+     * Get array of section info.
+     *
+     * @return array|section_info[]
+     */
+    public function get_sectioninfo() {
+        return $this->sectioninfo;
     }
 
     /**
@@ -234,6 +267,11 @@ class course_modinfo extends stdClass {
         // Loop through each piece of module data, constructing it
         $modexists = array();
         foreach ($info as $mod) {
+            // @todo Find permanent storage solution for sections
+            if (!empty($mod->sections)) {
+                $this->sectioninfo = $mod->sections;
+                unset($mod->sections);
+            }
             if (empty($mod->name)) {
                 // something is wrong here
                 continue;
@@ -264,6 +302,11 @@ class course_modinfo extends stdClass {
             $this->sections[$cm->sectionnum][] = $cm->id;
         }
 
+        // Get dynamic data from sections (before modules!)
+        foreach ($this->sectioninfo as $sectioninfo) {
+            $sectioninfo->obtain_dynamic_data($this);
+        }
+
         // We need at least 'dynamic' data from each course-module (this is basically the remaining
         // data which was always present in previous version of get_fast_modinfo, so it's required
         // for BC). Creating it in a second pass is necessary because obtain_dynamic_data sometimes
@@ -274,6 +317,281 @@ class course_modinfo extends stdClass {
     }
 }
 
+/**
+ * Section information
+ *
+ * Warning, this class does get serialized and stored
+ * into the database, so must be able to survive that.
+ */
+class section_info extends stdClass implements condition_availability {
+    /**
+     * Section record ID
+     *
+     * @var int
+     */
+    public $id;
+
+    /**
+     * Course record ID
+     *
+     * @var int
+     */
+    public $course;
+
+    /**
+     * Section number
+     *
+     * @var int
+     */
+    public $section;
+
+    /**
+     * @var string
+     */
+    public $name;
+
+    /**
+     * @var string
+     */
+    public $summary;
+
+    /**
+     * @var int
+     */
+    public $summaryformat;
+
+    /**
+     * Module sequence (raw form)
+     *
+     * @var null|string
+     */
+    public $sequence = NULL;
+
+    /**
+     * @var int
+     */
+    public $visible;
+
+    /**
+     * If the section is visible to the user or not
+     *
+     * @var bool
+     */
+    public $uservisible = true;
+
+    /**
+     * If the section is available to the user based on the conditions
+     *
+     * @var bool
+     */
+    public $available = true;
+
+    /**
+     * Available date for this section (0 if not set, or set to seconds since epoch; before this
+     * date, section does not display to students)
+     *
+     * @var int
+     */
+    public $availablefrom = 0;
+
+    /**
+     * Available until date for this section (0 if not set, or set to seconds since epoch; from
+     * this date, section does not display to students)
+     *
+     * @var int
+     */
+    public $availableuntil = 0;
+
+    /**
+     * When section is unavailable, this field controls whether it is shown to students (0 =
+     * hide completely, 1 = show greyed out with information about when it will be available)
+     *
+     * @var int
+     */
+    public $showavailability = 0;
+
+    /**
+     * If section is not available to students, this string gives information about
+     * availability which can be displayed to students and/or staff (e.g. 'Available from 3
+     * January 2010') for display on main page - obtained dynamically
+     *
+     * @var string
+     */
+    public $availableinfo = '';
+
+    /**
+     * Full availability information string.
+     *
+     * @var string
+     */
+    public $availablefullinfo = '';
+
+    /**
+     * An array of conditions that restrict this section's availability.
+     *
+     * @var array|condition_base[]
+     */
+    public $conditions = array();
+
+    /**
+     * @param object $section Section record object
+     */
+    public function __construct($section) {
+        global $CFG;
+
+        $this->id            = $section->id;
+        $this->course        = $section->course;
+        $this->section       = $section->section;
+        $this->name          = $section->name;
+        $this->summary       = $section->summary;
+        $this->summaryformat = $section->summaryformat;
+        $this->visible       = $section->visible;
+
+        // Sometimes not set due to dynamic creation
+        if (property_exists($section, 'sequence')) {
+            $this->sequence = $section->sequence;
+        }
+        if (!empty($CFG->enableavailability)) {
+            $this->showavailability = $section->showavailability;
+            $this->availablefrom    = $section->availablefrom;
+            $this->availableuntil   = $section->availableuntil;
+            $this->load_conditions();
+        }
+    }
+
+    /**
+     * Load conditions
+     *
+     * @return void
+     */
+    protected function load_conditions() {
+        global $DB;
+
+        // Select only conditions that are still valid (EG: activity was deleted)
+        $conditions = $DB->get_records_sql("SELECT csa.id AS csaid, gi.*, csa.sourcecmid, csa.requiredcompletion,
+                                                   csa.gradeitemid, csa.grademin AS conditiongrademin,
+                                                   csa.grademax AS conditiongrademax
+                                              FROM {course_sections_availability} csa
+                                         LEFT JOIN {course_modules} cm ON cm.id = csa.sourcecmid
+                                         LEFT JOIN {grade_items} gi ON gi.id = csa.gradeitemid
+                                             WHERE coursesectionid = ?
+                                               AND ((csa.sourcecmid IS NOT NULL AND cm.id IS NOT NULL)
+                                                OR (csa.gradeitemid IS NOT NULL AND gi.id IS NOT NULL))
+                                          ORDER BY csaid", array($this->id));
+
+        foreach ($conditions as $condition) {
+            if (!is_null($condition->sourcecmid)) {
+                $this->conditions[] = new condition_completion(
+                    $condition->sourcecmid,
+                    $condition->requiredcompletion
+                );
+            } else {
+                // We are "faking" the grade item object - the grade API prunes extra data for us
+                $this->conditions[] = new condition_grade(
+                    $condition,
+                    $condition->conditiongrademin,
+                    $condition->conditiongrademax
+                );
+            }
+        }
+        if (!empty($this->availablefrom) or !empty($this->availableuntil)) {
+            $this->conditions[] = new condition_daterange(
+                $this->availablefrom,
+                $this->availableuntil
+            );
+        }
+    }
+
+    /**
+     * Updates dynamic instance data - called after object
+     * is unserialized and course_modinfo is being built.
+     *
+     * @param course_modinfo $modinfo
+     * @return void
+     */
+    public function obtain_dynamic_data(course_modinfo $modinfo) {
+        global $CFG;
+
+        if ($CFG->enableavailability) {
+            $ci = new condition_info_controller($this);
+            $this->available = $ci->is_available(
+                $this->availableinfo, $modinfo, true
+            );
+            $this->availablefullinfo = $ci->get_full_information($modinfo);
+        }
+        $this->update_user_visible($modinfo);
+    }
+
+    /**
+     * Determine if this section is visible to the user.
+     *
+     * @param course_modinfo $modinfo
+     * @return void
+     */
+    public function update_user_visible(course_modinfo $modinfo) {
+        $this->uservisible = true;
+        if ((!$this->available or !$this->visible) and
+            !has_capability('moodle/course:viewhiddensections', get_context_instance(CONTEXT_COURSE, $this->course), $modinfo->get_user_id())) {
+            $this->uservisible = false;
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Interface method
+     */
+    public function get_conditions() {
+        return $this->conditions;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Interface method
+     * @throws coding_exception
+     */
+    public function add_condition(condition_base $condition) {
+        global $DB;
+
+        if ($condition instanceof condition_grade) {
+            $DB->insert_record('course_sections_availability', (object) array(
+                'coursesectionid' => $this->id,
+                'gradeitemid' => $condition->get_gradeitemid(),
+                'grademin' => $condition->get_min(),
+                'grademax'=> $condition->get_max()
+            ), false);
+
+            // Store in memory
+            $this->conditions[] = $condition;
+
+        } else if ($condition instanceof condition_completion) {
+            $DB->insert_record('course_sections_availability', (object) array(
+                'coursesectionid' => $this->id,
+                'sourcecmid' => $condition->get_cmid(),
+                'requiredcompletion' => $condition->get_requiredcompletion()
+            ), false);
+
+            // Store in memory
+            $this->conditions[] = $condition;
+        } else {
+            throw new coding_exception('Unsupported condition: '.get_class($condition));
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * Interface method
+     */
+    public function delete_conditions() {
+        global $DB;
+
+        $DB->delete_records('course_sections_availability', array('coursesectionid' => $this->id));
+        $this->conditionsgrade      = array();
+        $this->conditionscompletion = array();
+    }
+}
 
 /**
  * Data about a single module on a course. This contains most of the fields in the course_modules
@@ -868,14 +1186,20 @@ class cm_info extends stdClass  {
         $userid = $this->modinfo->get_user_id();
 
         if (!empty($CFG->enableavailability)) {
-            // Get availability information
-            $ci = new condition_info($this);
-            // Note that the modinfo currently available only includes minimal details (basic data)
-            // so passing it to this function is a bit dangerous as it would cause infinite
-            // recursion if it tried to get dynamic data, however we know that this function only
-            // uses basic data.
-            $this->available = $ci->is_available($this->availableinfo, true,
-                    $userid, $this->modinfo);
+            $sectionavailable = true;
+            if ($section = $this->modinfo->get_section($this->sectionnum)) {
+                $sectionavailable = $section->available;
+            }
+            if ($sectionavailable) {
+                // Get availability information
+                $ci = new condition_info($this);
+                // Note that the modinfo currently available only includes minimal details (basic data)
+                // so passing it to this function is a bit dangerous as it would cause infinite
+                // recursion if it tried to get dynamic data, however we know that this function only
+                // uses basic data.
+                $this->available = $ci->is_available($this->availableinfo, true,
+                        $userid, $this->modinfo);
+            }
         } else {
             $this->available = true;
         }

@@ -1166,6 +1166,22 @@ function get_array_of_activities($courseid) {
     return $mod;
 }
 
+/**
+ * Get an array of sections for course cache.
+ *
+ * @param int $courseid
+ * @return array|section_info[]
+ */
+function get_array_of_sections($courseid) {
+    global $DB;
+
+    $return   = array();
+    $sections = $DB->get_records('course_sections', array('course' => $courseid), 'section');
+    foreach ($sections as $section) {
+        $return[$section->section] = new section_info($section);
+    }
+    return $return;
+}
 
 /**
  * Returns a number of useful structures for course displays
@@ -1361,6 +1377,71 @@ function get_print_section_cm_text(cm_info $cm, $course) {
     $stringoptions->context = $coursecontext;
     $instancename = format_string($cm->name, true,  $stringoptions);
     return array($content, $instancename);
+}
+
+/**
+ * Determine if a section should be shown
+ *
+ * @param object $section The section
+ * @param object $course The course object
+ * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @return bool
+ */
+function get_section_show($section, $course, course_modinfo $modinfo = NULL) {
+    global $CFG;
+
+    $context     = get_context_instance(CONTEXT_COURSE, $course->id);
+    $showsection = (has_capability('moodle/course:viewhiddensections', $context) or $section->visible or !$course->hiddensections);
+
+    if ($showsection and !empty($CFG->enableavailability)) {
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        // This can still be false!  Check PHPDoc for more info.
+        $sectioninfo = $modinfo->get_section($section->section);
+
+        // Apply availability logic now - if not available then hide this section
+        // if we don't have availability information or if we shouldn't show it
+        if ($sectioninfo and !$sectioninfo->available) {
+            if (empty($sectioninfo->availableinfo) or empty($sectioninfo->showavailability)) {
+                $showsection = false;
+            }
+        }
+    }
+    return $showsection;
+}
+
+/**
+ * Get full availability information string for a section
+ *
+ * @param object $section The section
+ * @param object $course The course object
+ * @param course_modinfo|null $modinfo Course modinfo if handy
+ * @return string
+ */
+function get_section_full_availability_info($section, $course, course_modinfo $modinfo = NULL) {
+    global $CFG;
+
+    $availibility = '';
+
+    if (!empty($CFG->enableavailability)) {
+        if (is_null($modinfo)) {
+            $modinfo = get_fast_modinfo($course);
+        }
+        // This can still be false!  Check PHPDoc for more info.
+        $sectioninfo = $modinfo->get_section($section->section);
+        $context     = get_context_instance(CONTEXT_COURSE, $course->id);
+
+        if (has_capability('moodle/course:viewhiddensections', $context) and $sectioninfo and !empty($sectioninfo->availablefullinfo)) {
+            $information = get_string(
+                $sectioninfo->showavailability ? 'userrestriction_visible' : 'userrestriction_hidden',
+                'condition',
+                $sectioninfo->availablefullinfo
+            );
+            $availibility = html_writer::tag('div', $information, array('class' => 'availabilityinfo'));
+        }
+    }
+    return $availibility;
 }
 
 /**
@@ -1899,7 +1980,15 @@ function rebuild_course_cache($courseid=0, $clearonly=false) {
 
     $rs = $DB->get_recordset("course", $select,'','id,fullname');
     foreach ($rs as $course) {
-        $modinfo = serialize(get_array_of_activities($course->id));
+        $modinfo  = get_array_of_activities($course->id);
+        $sections = get_array_of_sections($course->id);
+
+        // @todo Find a permanent storage solution for sections
+        foreach ($modinfo as $cmid => $mod) {
+            $modinfo[$cmid]->sections = $sections;
+            break;
+        }
+        $modinfo = serialize($modinfo);
         $DB->set_field("course", "modinfo", $modinfo, array("id"=>$course->id));
         // update cached global COURSE too ;-)
         if ($course->id == $COURSE->id) {
