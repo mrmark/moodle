@@ -376,25 +376,16 @@ if ($interactive) {
     }
 }
 
-//download lang pack with optional notification
-if ($CFG->lang != 'en') {
-    if ($cd = new component_installer('http://download.moodle.org', 'langpack/2.0', $CFG->lang.'.zip', 'languages.md5', 'lang')) {
-        if ($cd->install() == COMPONENT_ERROR) {
-            if ($cd->get_error() == 'remotedownloaderror') {
-                $a = new stdClass();
-                $a->url  = 'http://download.moodle.org/langpack/2.0/'.$CFG->lang.'.zip';
-                $a->dest = $CFG->dataroot.'/lang';
-                cli_problem(get_string($cd->get_error(), 'error', $a));
-            } else {
-                cli_problem(get_string($cd->get_error(), 'error'));
-            }
-        } else {
-            // install parent lang if defined
-            if ($parentlang = get_parent_language()) {
-                if ($cd = new component_installer('http://download.moodle.org', 'langpack/2.0', $parentlang.'.zip', 'languages.md5', 'lang')) {
-                    $cd->install();
-                }
-            }
+// download required lang packs
+if ($CFG->lang !== 'en') {
+    $installer = new lang_installer($CFG->lang);
+    $results = $installer->run();
+    foreach ($results as $langcode => $langstatus) {
+        if ($langstatus === lang_installer::RESULT_DOWNLOADERROR) {
+            $a       = new stdClass();
+            $a->url  = $installer->lang_pack_url($langcode);
+            $a->dest = $CFG->dataroot.'/lang';
+            cli_problem(get_string('remotedownloaderror', 'error', $a));
         }
     }
 }
@@ -415,7 +406,7 @@ if (isset($maturity)) {
             cli_heading(get_string('notice'));
             echo get_string('maturitycorewarning', 'admin', $maturitylevel) . PHP_EOL;
             echo get_string('morehelp') . ': ' . get_docs_url('admin/versions') . PHP_EOL;
-            echo get_string('continue') . PHP_LOL;
+            echo get_string('continue') . PHP_EOL;
             $prompt = get_string('cliyesnoprompt', 'admin');
             $input = cli_input($prompt, '', array(get_string('clianswerno', 'admin'), get_string('cliansweryes', 'admin')));
             if ($input == get_string('clianswerno', 'admin')) {
