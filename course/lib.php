@@ -3682,6 +3682,40 @@ function course_format_ajax_support($format) {
 }
 
 /**
+ * Determine if the course module is available due to outside conditions
+ * Example, the course section is not available.
+ *
+ * Warning: this is called during the building of modinfo
+ *
+ * @param cm_info $cm The course module in question
+ * @return bool
+ */
+function course_format_course_module_available(cm_info $cm) {
+    global $CFG;
+
+    // Try to prevent doing require_once for every $cm
+    static $included = array();
+
+    $format = $cm->get_course()->format;
+
+    $featurefile = $CFG->dirroot.'/course/format/'.$format.'/lib.php';
+    $featurefunction = 'callback_'.$format.'_course_module_available';
+    if (!function_exists($featurefunction) && file_exists($featurefile) && !in_array($format, $included)) {
+        require_once $featurefile;
+        $included[] = $format;
+    }
+    if (function_exists($featurefunction)) {
+        return $featurefunction($cm);
+    }
+
+    // Default behavior
+    if ($section = $cm->get_modinfo()->get_section($cm->sectionnum)) {
+        return $section->available;
+    }
+    return true;
+}
+
+/**
  * Can the current user delete this course?
  * Course creators have exception,
  * 1 day after the creation they can sill delete the course.

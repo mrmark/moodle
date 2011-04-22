@@ -1186,11 +1186,7 @@ class cm_info extends stdClass  {
         $userid = $this->modinfo->get_user_id();
 
         if (!empty($CFG->enableavailability)) {
-            $sectionavailable = true;
-            if ($section = $this->modinfo->get_section($this->sectionnum)) {
-                $sectionavailable = $section->available;
-            }
-            if ($sectionavailable) {
+            if (course_format_course_module_available($this)) {
                 // Get availability information
                 $ci = new condition_info($this);
                 // Note that the modinfo currently available only includes minimal details (basic data)
@@ -1199,6 +1195,8 @@ class cm_info extends stdClass  {
                 // uses basic data.
                 $this->available = $ci->is_available($this->availableinfo, true,
                         $userid, $this->modinfo);
+            } else {
+                $this->available = false;
             }
         } else {
             $this->available = true;
