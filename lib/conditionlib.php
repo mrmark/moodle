@@ -1241,6 +1241,15 @@ class condition_info_controller {
     }
 
     /**
+     * Get if the conditions have been processed yet or not
+     *
+     * @return bool
+     */
+    public function get_processed() {
+        return $this->processed;
+    }
+
+    /**
      * Process the conditions
      *
      * @param course_modinfo $modinfo Set to the proper course and user
@@ -1249,7 +1258,7 @@ class condition_info_controller {
      * @return void
      */
     public function process_conditions(course_modinfo $modinfo, $grabthelot = false) {
-        if (!$this->processed) {
+        if (!$this->get_processed()) {
             $this->processed     = true;
             $this->useravailable = true;
             $useravailableinfo   = array();
@@ -1319,7 +1328,7 @@ class condition_info_controller {
      * @return void
      */
     protected function require_processed($function) {
-        if (!$this->processed) {
+        if (!$this->get_processed()) {
             throw new coding_exception("Must call process_conditions before calling $function");
         }
     }
