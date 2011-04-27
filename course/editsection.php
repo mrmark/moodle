@@ -46,12 +46,7 @@ $editoroptions = array('context'=>$context ,'maxfiles' => EDITOR_UNLIMITED_FILES
 $section = file_prepare_standard_editor($section, 'summary', $editoroptions, $context, 'course', 'section', $section->id);
 $section->usedefaultname = (is_null($section->name));
 
-if (!empty($CFG->enableavailability)) {
-    $ci = new condition_info_controller(new section_info($section));
-} else {
-    $ci = NULL;
-}
-$mform = new editsection_form(null, array('editoroptions'=>$editoroptions, 'ci'=>$ci));
+$mform = new editsection_form(null, array('editoroptions'=>$editoroptions, 'section'=>$section));
 $mform->set_data($section); // set current value
 
 /// If data submitted, then process and store.
@@ -72,7 +67,32 @@ if ($mform->is_cancelled()){
         if ($section->availableuntil) {
             $section->availableuntil = strtotime('23:59:59', $section->availableuntil);
         }
-        $ci->update_from_form($data);
+
+        $DB->delete_records('course_sections_availability', array('coursesectionid' => $section->id));
+
+        if (!empty($data->conditiongradegroup)) {
+            foreach ($data->conditiongradegroup as $record) {
+                if (!empty($record['conditiongradeitemid'])) {
+                    $DB->insert_record('course_sections_availability', (object) array(
+                        'coursesectionid' => $section->id,
+                        'gradeitemid' => $record['conditiongradeitemid'],
+                        'grademin' => $record['conditiongrademin'],
+                        'grademax'=> $record['conditiongrademax']
+                    ), false);
+                }
+            }
+        }
+        if (!empty($data->conditioncompletiongroup)) {
+            foreach($data->conditioncompletiongroup as $record) {
+                if (!empty($record['conditionsourcecmid'])) {
+                    $DB->insert_record('course_sections_availability', (object) array(
+                        'coursesectionid' => $section->id,
+                        'sourcecmid' => $record['conditionsourcecmid'],
+                        'requiredcompletion' => $record['conditionrequiredcompletion']
+                    ), false);
+                }
+            }
+        }
     }
     $data = file_postupdate_standard_editor($data, 'summary', $editoroptions, $context, 'course', 'section', $section->id);
     $section->summary = $data->summary;

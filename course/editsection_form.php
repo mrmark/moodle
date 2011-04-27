@@ -32,8 +32,8 @@ class editsection_form extends moodleform {
         $mform->setType('id', PARAM_INT);
 
         if (!empty($CFG->enableavailability)) {
-            $ci      = $this->_customdata['ci'];
-            $section = $ci->get_object();
+            $section = new section_info($this->_customdata['section']);
+            $ci      = new condition_info_controller($section->get_conditions());
 
             // Conditional availability
             $mform->addElement('header', '', get_string('availabilityconditions', 'condition'));
@@ -140,7 +140,8 @@ class editsection_form extends moodleform {
         // Availability conditions
         if (!empty($CFG->enableavailability)) {
             $mform = $this->_form;
-            $ci    = $this->_customdata['ci'];
+            $section = new section_info($this->_customdata['section']);
+            $ci = new condition_info_controller($section->get_conditions());
 
             $num=0;
             foreach($ci->get_conditions('condition_grade') as $condition) {

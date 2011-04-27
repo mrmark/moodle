@@ -1174,60 +1174,47 @@ class condition_completion extends condition_base {
 }
 
 /**
- * If an object implements this interface, then it can be restricted
- * by availability conditions.  Used by {@see condition_info_controller}
- */
-interface condition_availability {
-    /**
-     * Get conditions associated with the object.
-     *
-     * @abstract
-     * @return array|condition_base[]
-     */
-    public function get_conditions();
-
-    /**
-     * Given a condition, save it to the database
-     *
-     * @abstract
-     * @param condition_base $condition The condition instance,
-     *        populated and ready to be saved.
-     * @return void
-     */
-    public function add_condition(condition_base $condition);
-
-    /**
-     * Delete all conditions
-     *
-     * @abstract
-     * @return void
-     */
-    public function delete_conditions();
-}
-
-/**
- * Given an instance of condition_availability, determine availability
- * information.  Basically, this completes the functionality of
- * condition_availability instances.
+ * Given conditions, determine if the user has met those conditions.
+ *
+ * Also gives information about why the user has not met conditions
+ * and verbose information about all of the conditions that must be met.
  */
 class condition_info_controller {
     /**
-     * @var condition_availability
+     * @var array|condition_base[]
      */
-    protected $object;
+    protected $conditions;
 
     /**
-     * @param condition_availability $object
+     * @var boolean
      */
-    public function __construct(condition_availability $object) {
-        $this->object = $object;
-    }
+    protected $processed = false;
 
     /**
-     * @return condition_availability
+     * @var boolean
      */
-    public function get_object() {
-        return $this->object;
+    protected $useravailable;
+
+    /**
+     * @var string
+     */
+    protected $useravailableinfo;
+
+    /**
+     * @var string
+     */
+    protected $conditioninfo;
+
+    /**
+     * @param array|condition_base[] $conditions The conditions to work with
+     */
+    public function __construct(array $conditions) {
+        foreach ($conditions as $condition) {
+            if (!$condition instanceof condition_base) {
+                throw new coding_exception('Invalid condition class passed, must extend condition_base');
+            }
+        }
+        $this->conditions = $conditions;
     }
 
     /**
@@ -1240,105 +1227,100 @@ class condition_info_controller {
      *                             conditions to a specific type.
      * @return array|condition_base[]
      */
-    public function get_conditions($conditionclass = NULL) {
-        $conditions = $this->object->get_conditions();
-
+    public function get_conditions($conditionclass = null) {
         if (!is_null($conditionclass)) {
-            $return = array();
-            foreach ($conditions as $condition) {
+            $conditions = array();
+            foreach ($this->conditions as $condition) {
                 if ($condition instanceof $conditionclass) {
-                    $return[] = $condition;
+                    $conditions[] = $condition;
                 }
             }
-            return $return;
+            return $conditions;
         }
-        return $conditions;
+        return $this->conditions;
     }
 
     /**
-     * Obtains a string describing all availability restrictions (even if
-     * they do not apply any more).
+     * Process the conditions
      *
      * @param course_modinfo $modinfo Set to the proper course and user
-     * @return string Information string (for admin) about all restrictions on
-     *   this item
-     */
-    public function get_full_information(course_modinfo $modinfo) {
-
-        $information = array();
-        foreach ($this->get_conditions() as $condition) {
-            if ($info = $condition->get_information($modinfo)) {
-                $information[] = $info;
-            }
-        }
-        return implode(' ', $information);
-    }
-
-    /**
-     * Determines if condition_availability object is available or not based
-     * only on its set conditions.
-     *
-     * @param string $information If the item has availability restrictions,
-     *   a string that describes the conditions will be stored in this variable;
-     *   if this variable is set blank, that means don't display anything
-     * @param course_modinfo $modinfo Set to correct course and user
      * @param bool $grabthelot Performance flag: if true then try to do things as efficient
-     *   as possible (works only for current user)
-     * @return bool True if this item is available to the user, false otherwise
-     */
-    public function is_available(&$information, course_modinfo $modinfo, $grabthelot = false) {
-        $available = true;
-        $infos     = array();
-
-        foreach ($this->get_conditions() as $condition) {
-            list($met, $info) = $condition->has_been_met($modinfo, $grabthelot);
-
-            if (!$met) {
-                $available = false;
-                if (!empty($info)) {
-                    $infos[] = $info;
-                }
-            }
-        }
-        $information = implode(' ', $infos);
-        return $available;
-    }
-
-    /**
-     * Save conditions form form input
-     *
-     * @param object $data Form data
-     * @param bool $deletefirst Delete existing conditions first
+     *                         as possible (works only for current user)
      * @return void
      */
-    public function update_from_form($data, $deletefirst = true) {
-        if ($deletefirst) {
-            $this->object->delete_conditions();
-        }
-        if (!empty($data->conditiongradegroup)) {
-            foreach ($data->conditiongradegroup as $record) {
-                if ($record['conditiongradeitemid']) {
+    public function process_conditions(course_modinfo $modinfo, $grabthelot = false) {
+        if (!$this->processed) {
+            $this->processed     = true;
+            $this->useravailable = true;
+            $useravailableinfo   = array();
+            $conditioninfo       = array();
 
-                    $condition = new condition_grade(
-                        $record['conditiongradeitemid'],
-                        $record['conditiongrademin'],
-                        $record['conditiongrademax']
-                    );
-                    $this->object->add_condition($condition);
+            foreach ($this->get_conditions() as $condition) {
+                if ($info = $condition->get_information($modinfo)) {
+                    $conditioninfo[] = $info;
+                }
+
+                list($met, $info) = $condition->has_been_met($modinfo, $grabthelot);
+
+                if (!$met) {
+                    $this->useravailable = false;
+                    if (!empty($info)) {
+                        $useravailableinfo[] = $info;
+                    }
                 }
             }
+            $this->useravailableinfo = implode(' ', $useravailableinfo);
+            $this->conditioninfo     = implode(' ', $conditioninfo);
         }
-        if (!empty($data->conditioncompletiongroup)) {
-            foreach($data->conditioncompletiongroup as $record) {
-                if ($record['conditionsourcecmid']) {
+    }
 
-                    $condition = new condition_completion(
-                        $record['conditionsourcecmid'],
-                        $record['conditionrequiredcompletion']
-                    );
-                    $this->object->add_condition($condition);
-                }
-            }
+    /**
+     * Get if the conditions have been met by the user or not.
+     *
+     * Must call process_conditions before calling this.
+     *
+     * @return boolean
+     */
+    public function get_user_available() {
+        $this->require_processed(__FUNCTION__);
+        return $this->useravailable;
+    }
+
+    /**
+     * Get information string about user availability.  Will
+     * be blank when the user has met all conditions.
+     *
+     * Must call process_conditions before calling this.
+     *
+     * @return string
+     */
+    public function get_user_available_info() {
+        $this->require_processed(__FUNCTION__);
+        return $this->useravailableinfo;
+    }
+
+    /**
+     * Get verbose condition restriction information.
+     *
+     * Must call process_conditions before calling this.
+     *
+     * @return string
+     */
+    public function get_condition_info() {
+        $this->require_processed(__FUNCTION__);
+        return $this->conditioninfo;
+    }
+
+    /**
+     * Helper method, make sure we have processed the conditions
+     *
+     * @throws coding_exception
+     * @param string $function The function being called
+     * @return void
+     */
+    protected function require_processed($function) {
+        if (!$this->processed) {
+            throw new coding_exception("Must call process_conditions before calling $function");
         }
     }
 }

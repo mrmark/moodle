@@ -32,7 +32,6 @@ if (!defined('MAX_MODINFO_CACHE_SIZE')) {
     define('MAX_MODINFO_CACHE_SIZE', 10);
 }
 
-require_once($CFG->libdir.'/conditionlib.php');
 
 /**
  * Information about a course that is cached in the course table 'modinfo' field (and then in
@@ -323,7 +322,7 @@ class course_modinfo extends stdClass {
  * Warning, this class does get serialized and stored
  * into the database, so must be able to survive that.
  */
-class section_info extends stdClass implements condition_availability {
+class section_info extends stdClass {
     /**
      * Section record ID
      *
@@ -513,11 +512,12 @@ class section_info extends stdClass implements condition_availability {
         global $CFG;
 
         if ($CFG->enableavailability) {
-            $ci = new condition_info_controller($this);
-            $this->available = $ci->is_available(
-                $this->availableinfo, $modinfo, true
-            );
-            $this->availablefullinfo = $ci->get_full_information($modinfo);
+            $ci = new condition_info_controller($this->get_conditions());
+            $ci->process_conditions($modinfo, true);
+
+            $this->available = $ci->get_user_available();
+            $this->availableinfo = $ci->get_user_available_info();
+            $this->availablefullinfo = $ci->get_condition_info();
         }
         $this->update_user_visible($modinfo);
     }
@@ -537,59 +537,12 @@ class section_info extends stdClass implements condition_availability {
     }
 
     /**
-     * {@inheritdoc}
+     * Get availability conditions
      *
-     * Interface method
+     * @return array|condition_base[]
      */
     public function get_conditions() {
         return $this->conditions;
-    }
-
-    /**
-     * {@inheritdoc}
-     *
-     * Interface method
-     * @throws coding_exception
-     */
-    public function add_condition(condition_base $condition) {
-        global $DB;
-
-        if ($condition instanceof condition_grade) {
-            $DB->insert_record('course_sections_availability', (object) array(
-                'coursesectionid' => $this->id,
-                'gradeitemid' => $condition->get_gradeitemid(),
-                'grademin' => $condition->get_min(),
-                'grademax'=> $condition->get_max()
-            ), false);
-
-            // Store in memory
-            $this->conditions[] = $condition;
-
-        } else if ($condition instanceof condition_completion) {
-            $DB->insert_record('course_sections_availability', (object) array(
-                'coursesectionid' => $this->id,
-                'sourcecmid' => $condition->get_cmid(),
-                'requiredcompletion' => $condition->get_requiredcompletion()
-            ), false);
-
-            // Store in memory
-            $this->conditions[] = $condition;
-        } else {
-            throw new coding_exception('Unsupported condition: '.get_class($condition));
-        }
-    }
-
-    /**
-     * {@inheritdoc}
-     *
-     * Interface method
-     */
-    public function delete_conditions() {
-        global $DB;
-
-        $DB->delete_records('course_sections_availability', array('coursesectionid' => $this->id));
-        $this->conditionsgrade      = array();
-        $this->conditionscompletion = array();
     }
 }
 
