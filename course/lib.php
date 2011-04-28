@@ -3691,12 +3691,29 @@ function course_format_ajax_support($format) {
  * @return bool
  */
 function course_format_course_module_available(cm_info $cm) {
-    global $CFG;
+    global $CFG, $DB, $COURSE;
 
     // Try to prevent doing require_once for every $cm
     static $included = array();
 
-    $format = $cm->get_course()->format;
+    // Cache formats when course object is missing format
+    static $formats  = array();
+
+    // Find the course format
+    $course = $cm->get_course();
+    if (!empty($course->format)) {
+        $format = $course->format;
+    } else if ($course->id == $COURSE->id) {
+        $format = $COURSE->format;
+    } else {
+        if (!array_key_exists($course->id, $formats)) {
+            if (!$format = $DB->get_field('course', 'format', array('id' => $course->id))) {
+                $format = 'weeks';
+            }
+            $formats[$course->id] = $format;
+        }
+        $format = $formats[$course->id];
+    }
 
     $featurefile = $CFG->dirroot.'/course/format/'.$format.'/lib.php';
     $featurefunction = 'callback_'.$format.'_course_module_available';
