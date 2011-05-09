@@ -1,37 +1,55 @@
 <?php
+
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+
 /**
- * Plan Based Abstract Converter
+ * @package    core
+ * @subpackage backup-convert
+ * @copyright  2011 Mark Nielsen <mark@moodlerooms.com>
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-abstract class plan_converter extends base_converter {
 
-    /**
-     * @var convert_plan
-     */
+defined('MOODLE_INTERNAL') || die();
+
+/**
+ * Base class for all converters using plan/tasks/steps pattern
+ *
+ * All converters that use {@link convert_plan} must extend this class.
+ */
+abstract class planned_converter extends base_converter {
+
+    /** @var convert_plan */
     protected $plan;
-
-    /**
-     * @var progressive_parser
-     */
+    /** @var progressive_parser */
     protected $xmlparser;
-
-    /**
-     * @var convert_structure_parser_processor
-     */
+    /** @var convert_structure_parser_processor */
     protected $xmlprocessor;
+    /** @var array path elements to process */
+    protected $pathelements = array();
+    /** @todo needed? redo? path currently locking processing of children */
+    protected $pathlock;
 
     /**
-     * @var array
+     * Instructs the dispatcher to ignore all children below path processor returning it
      */
-    protected $pathelements = array();  // Array of pathelements to process
-
-    // @todo needed? redo?
-    protected $pathlock;      // Path currently locking processing of children
-
-    // @todo IDK what this is really...
-    const SKIP_ALL_CHILDREN = -991399; // To instruct the dispatcher about to ignore
-                                       // all children below path processor returning it
+    const SKIP_ALL_CHILDREN = -991399;
 
     /**
+     * Return the plan instance, instatinate it if it does not exist yet
+     *
      * @return convert_plan
      */
     public function get_plan() {
