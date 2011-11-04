@@ -58,6 +58,12 @@ class course_reset_form extends moodleform {
         if ($allmods = $DB->get_records('modules') ) {
             foreach ($allmods as $mod) {
                 $modname = $mod->name;
+                if (!$DB->get_manager()->table_exists($modname)) {
+                    continue; // Skip mods with a missing table
+                }
+                if (!$DB->get_manager()->field_exists($modname, 'course')) {
+                    continue; // Skip mods with a missing 'course' field
+                }
                 if (!$DB->count_records($modname, array('course'=>$COURSE->id))) {
                     continue; // skip mods with no instances
                 }
