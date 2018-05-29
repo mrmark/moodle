@@ -24,6 +24,8 @@
 namespace core_privacy;
 use core_privacy\local\metadata\collection;
 use core_privacy\local\metadata\null_provider;
+use core_privacy\local\metadata\types\external_location;
+use core_privacy\local\metadata\types\user_preference;
 use core_privacy\local\request\context_aware_provider;
 use core_privacy\local\request\contextlist_collection;
 use core_privacy\local\request\core_user_data_provider;
@@ -149,13 +151,32 @@ class manager {
             return true;
         }
 
-        // Components which store user data must implement the local\metadata\provider and the local\request\data_provider.
-        if ($this->component_implements($component, metadata_provider::class) &&
-            $this->component_implements($component, data_provider::class)) {
-            return true;
+        if (!$this->component_implements($component, metadata_provider::class)) {
+            return false;
         }
 
-        return false;
+        if (!$this->component_implements($component, data_provider::class)) {
+            return false;
+        }
+
+        $metadata = $this->handled_component_class_callback($component, metadata_provider::class,
+            'get_metadata', [new collection($component)]);
+
+        if (!$metadata instanceof collection || count($metadata->get_collection()) === 0) {
+            return false;
+        }
+
+        // Validate that the provider implemented user preferences correctly.
+        $hasuserprefprovider = $this->component_implements($component, user_preference_provider::class);
+        $hasuserpreftype     = array_reduce($metadata->get_collection(), function($carry, $type) {
+            return $type instanceof user_preference ? true : $carry;
+        }, false);
+
+        if ($hasuserprefprovider !== $hasuserpreftype) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
